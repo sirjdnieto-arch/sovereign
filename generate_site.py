@@ -313,10 +313,10 @@ def analyze_technical(row):
     df = yf_download_prices(ticker, CONFIG["PRICE_PERIOD"])
 
     # Evitar señales con vela diaria potencialmente incompleta.
-# Esto replica la idea de TradingView: "esperar al cierre del intervalo".
-try:
-    if CONFIG.get("DROP_TODAY_CANDLE", True):
-        today_utc = datetime.now(timezone.utc).date()
+    # Esto replica la idea de TradingView: "esperar al cierre del intervalo".
+    try:
+        if CONFIG.get("DROP_TODAY_CANDLE", True):
+            today_utc = datetime.now(timezone.utc).date()
 
         if len(df) > 1 and pd.to_datetime(df.index[-1]).date() == today_utc:
             df = df.iloc[:-1]
@@ -379,11 +379,11 @@ except Exception:
     pvi_sig_now = safe_float(c["PVI_Signal"])
 
     pvi_prev = safe_float(df["PVI"].iloc[-2])
-pvi_sig_prev = safe_float(df["PVI_Signal"].iloc[-2])
-
-raw_has_buy = buy_ago is not None
-raw_has_pvi_sell = pvi_sell_ago is not None
-raw_has_mcg_sell = mcg_sell_ago is not None
+    pvi_sig_prev = safe_float(df["PVI_Signal"].iloc[-2])
+    
+    raw_has_buy = buy_ago is not None
+    raw_has_pvi_sell = pvi_sell_ago is not None
+    raw_has_mcg_sell = mcg_sell_ago is not None
 
 # La señal solo es válida si el estado actual la confirma.
 if CONFIG.get("REQUIRE_CURRENT_SIGNAL_STATE", True):
