@@ -43,38 +43,31 @@ UNIVERSE = {
         "ABBV", "KO", "PEP", "COST", "BAC", "CRM", "NFLX", "ABT", "MCD",
         "LMT", "EL", "NEE", "CAT", "MRK", "TPL"
     ],
-
     "NASDAQ 100": [
         "ASML", "ADBE", "AVGO", "CSCO", "CMCSA", "AMD", "TXN", "QCOM",
         "AMAT", "INTU", "VRTX", "ZS", "PLTR", "CSU.TO", "MU"
     ],
-
     "Euro Stoxx 50": [
         "LVMUY", "SAP", "OR.PA", "TTE", "MC.PA", "SIE.DE", "ENGI.PA",
         "AIR.PA", "ALV.DE", "EL.PA", "AI.PA", "BNP.PA", "SAN.PA",
         "KER.PA", "SU.PA", "NESN.SW"
     ],
-
     "DAX 40": [
         "LIN.DE", "VOW3.DE", "BMW.DE", "ADS.DE", "IFX.DE", "MUV2.DE",
         "FRE.DE", "DTE.DE", "RWE.DE"
     ],
-
     "IBEX 35": [
         "ITX.MC", "BBVA.MC", "SAN.MC", "TEF.MC", "IBE.MC", "REP.MC",
         "FER.MC", "ACX.MC", "ACS.MC", "AENA.MC", "ANA.MC", "IAG.MC",
         "LOG.MC", "MAP.MC", "PUIG.MC", "NTGY.MC", "ELE.MC", "IDR.MC"
     ],
-
     "China": [
         "PDD", "NIO", "TCEHY", "BZUN", "FUTU", "MOMO", "MNSO",
         "TAL", "EDU", "WB", "XPEV"
     ],
-
     "Commodities": [
         "GC=F", "SI=F"
     ],
-
     "Crypto": [
         "BTC-USD", "ETH-USD", "XRP-USD"
     ]
@@ -250,14 +243,7 @@ def calculate_mcginley(close, period):
 
 
 def calculate_pvi(df, ma_period):
-    """
-    PVI estilo TradingView/Fosback:
-    - Valor inicial 1000.
-    - Solo acumula variación del cierre cuando Volumen actual > Volumen anterior.
-    - Señal = EMA del PVI.
-    """
     df = df.copy()
-
     df["ROC"] = df["Close"].pct_change().fillna(0)
 
     vols = df["Volume"].fillna(0).values
@@ -272,8 +258,6 @@ def calculate_pvi(df, ma_period):
             pvi.append(pvi[-1])
 
     df["PVI"] = pvi
-
-    # TradingView usa EMA, no SMA.
     df["PVI_Signal"] = (
         df["PVI"]
         .ewm(span=ma_period, adjust=False, min_periods=ma_period)
@@ -312,12 +296,9 @@ def analyze_technical(row):
     name, currency, sector = get_name_currency_sector(ticker)
     df = yf_download_prices(ticker, CONFIG["PRICE_PERIOD"])
 
-    # Evitar señales con vela diaria potencialmente incompleta.
-    # Esto replica la idea de TradingView: "esperar al cierre del intervalo".
     try:
         if CONFIG.get("DROP_TODAY_CANDLE", True):
             today_utc = datetime.now(timezone.utc).date()
-
             if len(df) > 1 and pd.to_datetime(df.index[-1]).date() == today_utc:
                 df = df.iloc[:-1]
     except Exception:
@@ -383,20 +364,17 @@ def analyze_technical(row):
     raw_has_pvi_sell = pvi_sell_ago is not None
     raw_has_mcg_sell = mcg_sell_ago is not None
 
-    # La señal solo es válida si el estado actual la confirma.
     if CONFIG.get("REQUIRE_CURRENT_SIGNAL_STATE", True):
         has_buy = (
             raw_has_buy
             and valid_number(pvi_now, pvi_sig_now)
             and pvi_now > pvi_sig_now
         )
-
         has_pvi_sell = (
             raw_has_pvi_sell
             and valid_number(pvi_now, pvi_sig_now)
             and pvi_now < pvi_sig_now
         )
-
         has_mcg_sell = (
             raw_has_mcg_sell
             and valid_number(close_now, mcg_exit_now)
@@ -424,10 +402,8 @@ def analyze_technical(row):
 
     if has_buy:
         events.append(("🟢 COMPRA", buy_ago))
-
     if has_pvi_sell:
         events.append(("🟠 VENTA 50% PVI", pvi_sell_ago))
-
     if has_mcg_sell:
         events.append(("🟠 VENTA 50% McGINLEY", mcg_sell_ago))
 
@@ -488,8 +464,9 @@ def analyze_technical(row):
         "error": ""
     }
 
+
 # ============================================================
-# FUNDAMENTALES v2 — LCrack Sovereign
+# FUNDAMENTALES — LCrack Sovereign (Calidad + Valoración)
 # ============================================================
 
 def safe_div(n, d):
@@ -504,20 +481,11 @@ def safe_div(n, d):
 
 
 def scale_score(x, bad, good):
-    """
-    Escala lineal 0-100.
-    Funciona tanto si good > bad como si good < bad.
-    Ejemplo:
-      scale_score(0.20, 0.05, 0.20) => 100
-      scale_score(10, 40, 12)       => alto, porque P/E bajo es mejor
-    """
     x = safe_float(x)
     if not np.isfinite(x):
         return None
-
     if good == bad:
         return None
-
     s = (x - bad) / (good - bad) * 100
     return float(np.clip(s, 0, 100))
 
@@ -543,44 +511,64 @@ def avg_available(values, weights=None):
     return float(np.average(clean, weights=clean_w))
 
 
-def quality_label_from_score(score):
+def quality_label(score):
+    """Etiqueta legible para el score de calidad de negocio."""
     if score is None or pd.isna(score):
         return "N/A"
     score = float(score)
-
     if score >= 85:
         return "Excelente"
     if score >= 75:
-        return "Muy alta"
+        return "Muy buena"
     if score >= 65:
-        return "Alta"
-    if score >= 55:
         return "Buena"
-    if score >= 45:
-        return "Aceptable"
+    if score >= 50:
+        return "Media"
     return "Débil"
 
 
-def price_label_from_score(score):
-    """
-    Score alto = precio atractivo / barato.
-    Score bajo = precio exigente / caro.
-    """
+def valuation_label(score):
+    """Etiqueta legible para el score de valoración/precio."""
     if score is None or pd.isna(score):
         return "N/A"
     score = float(score)
-
-    if score >= 85:
+    if score >= 80:
         return "Muy barata"
-    if score >= 70:
+    if score >= 65:
         return "Barata"
-    if score >= 55:
-        return "Atractiva"
-    if score >= 40:
-        return "En precio"
+    if score >= 45:
+        return "Razonable"
     if score >= 25:
-        return "Exigente"
-    return "Cara"
+        return "Cara"
+    return "Muy cara"
+
+
+def fundamental_profile(q_score, v_score):
+    """
+    Perfil fundamental combinado a partir del score de calidad
+    y el score de valoración.
+    """
+    if q_score is None or v_score is None:
+        return "—"
+    if pd.isna(q_score) or pd.isna(v_score):
+        return "—"
+
+    q = float(q_score)
+    v = float(v_score)
+
+    if q >= 70 and v >= 70:
+        return "🟢 Calidad con descuento"
+    if q >= 70 and v >= 45:
+        return "✅ Calidad razonable"
+    if q >= 70 and v < 45:
+        return "💎 Calidad cara"
+    if 50 <= q < 70 and v >= 65:
+        return "🟡 Value especulativo"
+    if q < 50 and v >= 65:
+        return "🪤 Value trap"
+    if q < 50 and v < 45:
+        return "🔴 Débil y cara"
+    return "⚖️ Equilibrado"
 
 
 def confidence_grade(score):
@@ -618,7 +606,6 @@ def get_series(df, aliases):
             except Exception:
                 pass
 
-    # fallback flexible: búsqueda parcial
     aliases_low = [a.lower() for a in aliases]
     for idx in df.index:
         idx_low = str(idx).lower()
@@ -656,20 +643,12 @@ def get_val(df, aliases, pos=0, lookahead=4):
 
 
 def get_ttm(q_df, a_df, aliases, multiplier=4):
-    """
-    Prioridad:
-    1. Suma de últimos 4 datos válidos trimestrales.
-    2. Último dato válido x reporting multiplier.
-    3. Último dato anual.
-    """
     s = get_series(q_df, aliases)
 
     if s is not None:
         vals = s.dropna()
-
         if len(vals) >= 4:
             return safe_float(vals.iloc[:4].sum())
-
         if len(vals) >= 1 and multiplier:
             return safe_float(vals.iloc[0] * multiplier)
 
@@ -682,7 +661,6 @@ def statement_latest_date(*dfs):
     for df in dfs:
         if df is None or df.empty:
             continue
-
         for c in df.columns:
             try:
                 dates.append(pd.to_datetime(c).to_pydatetime().replace(tzinfo=None))
@@ -698,18 +676,13 @@ def statement_latest_date(*dfs):
 def period_label_from_date(dt, annual=False):
     if dt is None:
         return "N/A"
-
     if annual:
         return f"FY{str(dt.year)[-2:]}"
-
     q = ((dt.month - 1) // 3) + 1
     return f"{q}Q{str(dt.year)[-2:]}"
 
 
 def reporting_context(q_df, a_df):
-    """
-    Detecta si el reporting aparente es trimestral, semestral o anual.
-    """
     latest = statement_latest_date(q_df)
 
     if q_df is not None and not q_df.empty and len(q_df.columns) >= 2:
@@ -732,7 +705,6 @@ def reporting_context(q_df, a_df):
         return 4, "Quarterly/partial", period_label_from_date(latest), latest
 
     annual_latest = statement_latest_date(a_df)
-
     if annual_latest is not None:
         return 1, "Annual", period_label_from_date(annual_latest, annual=True), annual_latest
 
@@ -743,35 +715,22 @@ def route_fundamental_model(ticker, info):
     sector = str(info.get("sector") or "")
     industry = str(info.get("industry") or "")
 
-    bank_tickers = {
-        "JPM", "BAC", "SAN.MC", "BBVA.MC", "BNP.PA", "SAN.PA"
-    }
-
-    insurance_tickers = {
-        "ALV.DE", "MUV2.DE", "MAP.MC"
-    }
+    bank_tickers = {"JPM", "BAC", "SAN.MC", "BBVA.MC", "BNP.PA", "SAN.PA"}
+    insurance_tickers = {"ALV.DE", "MUV2.DE", "MAP.MC"}
 
     if ticker.endswith("-USD") or ticker.endswith("=F"):
         return "Technical-only"
-
     if ticker in insurance_tickers or "insurance" in industry.lower():
         return "Insurance"
-
     if ticker in bank_tickers or "bank" in industry.lower() or "banks" in industry.lower():
         return "Bank"
-
     if "financial services" in sector.lower():
-        # V, MA, exchanges, asset managers, fintech financiera, etc.
         return "Financial"
 
     return "Corporate"
 
 
 def calculate_piotroski_v2(f_df, b_df, cf_df, prev_pos=1, multiplier=1):
-    """
-    Piotroski F-Score robusto.
-    Usa anual si está disponible; si no, quarterly con prev_pos.
-    """
     if f_df is None or f_df.empty or b_df is None or b_df.empty:
         return np.nan
 
@@ -788,54 +747,38 @@ def calculate_piotroski_v2(f_df, b_df, cf_df, prev_pos=1, multiplier=1):
 
     ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
     ni1 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], prev_pos)
-
     cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
-
     ta0 = get_val(b_df, ["Total Assets"], 0)
     ta1 = get_val(b_df, ["Total Assets"], prev_pos)
-
     ltd0 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], 0)
     ltd1 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], prev_pos)
-
     ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
     ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
-
     cl0 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], 0)
     cl1 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], prev_pos)
-
     gp0 = get_val(f_df, ["Gross Profit"], 0)
     gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
-
     rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
     rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
-
     shares0 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
     shares1 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], prev_pos)
 
     if valid_number(ni0):
         add(ni0 > 0)
-
     if valid_number(cfo0):
         add(cfo0 > 0)
-
     if valid_number(ni0, ni1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((ni0 * multiplier / ta0) > (ni1 * multiplier / ta1))
-
     if valid_number(cfo0, ni0):
         add(cfo0 > ni0)
-
     if valid_number(ltd0, ltd1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((ltd0 / ta0) < (ltd1 / ta1))
-
     if valid_number(ca0, ca1, cl0, cl1) and cl0 != 0 and cl1 != 0:
         add((ca0 / cl0) > (ca1 / cl1))
-
     if valid_number(shares0, shares1):
         add(shares0 <= shares1)
-
     if valid_number(gp0, gp1, rev0, rev1) and rev0 != 0 and rev1 != 0:
         add((gp0 / rev0) > (gp1 / rev1))
-
     if valid_number(rev0, rev1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((rev0 * multiplier / ta0) > (rev1 * multiplier / ta1))
 
@@ -862,12 +805,9 @@ def calculate_altman_z_v2(b_df, f_df, info, market_cap, multiplier):
             0
         )
 
-        if not valid_number(ca):
-            ca = 0
-        if not valid_number(cl):
-            cl = 0
-        if not valid_number(re):
-            re = 0
+        if not valid_number(ca): ca = 0
+        if not valid_number(cl): cl = 0
+        if not valid_number(re): re = 0
 
         ebit = ebit * multiplier if valid_number(ebit) else np.nan
         revenue = revenue * multiplier if valid_number(revenue) else np.nan
@@ -890,88 +830,65 @@ def calculate_altman_z_v2(b_df, f_df, info, market_cap, multiplier):
 
 
 def calculate_beneish_m_score(f_df, b_df, cf_df, prev_pos=1):
-    """
-    Beneish M-Score aproximado.
-    Si faltan demasiados datos, devuelve NaN.
-    Bandera roja habitual: M > -1.78.
-    """
     try:
         rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
         rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
-
         rec0 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], 0)
         rec1 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], prev_pos)
-
         gp0 = get_val(f_df, ["Gross Profit"], 0)
         gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
-
         ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
         ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
-
         ppe0 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], 0)
         ppe1 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], prev_pos)
-
         ta0 = get_val(b_df, ["Total Assets"], 0)
         ta1 = get_val(b_df, ["Total Assets"], prev_pos)
-
         dep0 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], 0))
         dep1 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], prev_pos))
-
         sga0 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], 0)
         sga1 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], prev_pos)
-
         debt0 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
         debt1 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], prev_pos)
-
         ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
         cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
 
         comps = []
 
         dsri = safe_div(safe_div(rec0, rev0), safe_div(rec1, rev1))
-        if valid_number(dsri):
-            comps.append("dsri")
+        if valid_number(dsri): comps.append("dsri")
 
         gm0 = safe_div(gp0, rev0)
         gm1 = safe_div(gp1, rev1)
         gmi = safe_div(gm1, gm0)
-        if valid_number(gmi):
-            comps.append("gmi")
+        if valid_number(gmi): comps.append("gmi")
 
         aqi = safe_div(
             1 - safe_div(ca0 + ppe0, ta0),
             1 - safe_div(ca1 + ppe1, ta1)
         )
-        if valid_number(aqi):
-            comps.append("aqi")
+        if valid_number(aqi): comps.append("aqi")
 
         sgi = safe_div(rev0, rev1)
-        if valid_number(sgi):
-            comps.append("sgi")
+        if valid_number(sgi): comps.append("sgi")
 
         depi = safe_div(
             safe_div(dep1, dep1 + ppe1),
             safe_div(dep0, dep0 + ppe0)
         )
-        if valid_number(depi):
-            comps.append("depi")
+        if valid_number(depi): comps.append("depi")
 
         sgai = safe_div(safe_div(sga0, rev0), safe_div(sga1, rev1))
-        if valid_number(sgai):
-            comps.append("sgai")
+        if valid_number(sgai): comps.append("sgai")
 
         lvgi = safe_div(safe_div(debt0, ta0), safe_div(debt1, ta1))
-        if valid_number(lvgi):
-            comps.append("lvgi")
+        if valid_number(lvgi): comps.append("lvgi")
 
         tata = safe_div(ni0 - cfo0, ta0)
-        if valid_number(tata):
-            comps.append("tata")
+        if valid_number(tata): comps.append("tata")
 
         if len(comps) < 5:
             return np.nan
 
-        # Sustituciones neutras si falta algún componente
         dsri = dsri if valid_number(dsri) else 1
         gmi = gmi if valid_number(gmi) else 1
         aqi = aqi if valid_number(aqi) else 1
@@ -1080,35 +997,55 @@ def compute_confidence(model, latest_date, q_df, a_df, metrics):
     return confidence, confidence_grade(confidence), available, len(expected)
 
 
+# ============================================================
+# SCORING: dos ejes separados — Calidad y Valoración
+# ============================================================
+
+def score_quality_axis(sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk):
+    """
+    Eje de CALIDAD de negocio.
+    Pesos: calidad 30% · caja 25% · solvencia 20% · crecimiento 15% · riesgo 10%.
+    NO incluye valoración.
+    """
+    return avg_available(
+        [sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk],
+        weights=[30, 25, 20, 15, 10]
+    )
+
+
 def score_corporate(metrics):
-    quality = avg_available([
+    """
+    Calcula los sub-scores para modelo corporativo.
+    Devuelve: sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
+    """
+    sub_quality = avg_available([
         scale_score(metrics.get("roic"), 0.05, 0.20),
         scale_score(metrics.get("op_margin"), 0.05, 0.25),
         scale_score(metrics.get("gross_margin"), 0.20, 0.60),
         scale_score(metrics.get("piotroski"), 3, 8),
     ])
 
-    cash = avg_available([
+    sub_cash = avg_available([
         scale_score(metrics.get("cash_quality"), 0.60, 1.50),
         scale_score(metrics.get("fcf_margin"), -0.03, 0.12),
         100 if valid_number(metrics.get("cfo_ttm")) and metrics.get("cfo_ttm") > 0 else 20,
         100 if valid_number(metrics.get("fcf_ttm")) and metrics.get("fcf_ttm") > 0 else 20,
     ])
 
-    solvency = avg_available([
+    sub_solvency = avg_available([
         scale_score(metrics.get("altman_z"), 1.8, 3.0),
         scale_score(metrics.get("net_debt_ebitda"), 4.0, 1.0),
         scale_score(metrics.get("interest_coverage"), 1.5, 8.0),
         scale_score(metrics.get("current_ratio"), 0.8, 2.0),
     ])
 
-    growth = avg_available([
+    sub_growth = avg_available([
         scale_score(metrics.get("revenue_growth"), -0.10, 0.15),
         scale_score(metrics.get("op_income_growth"), -0.10, 0.20),
         metrics.get("consistency_score"),
     ])
 
-    valuation = avg_available([
+    sub_valuation = avg_available([
         scale_score(metrics.get("pe"), 40, 12),
         scale_score(metrics.get("pb"), 8, 1.5),
         scale_score(metrics.get("ev_ebitda"), 25, 10),
@@ -1127,7 +1064,7 @@ def score_corporate(metrics):
     else:
         beneish_score = None
 
-    risk = avg_available([
+    sub_risk = avg_available([
         beneish_score,
         scale_score(metrics.get("shares_growth"), 0.05, 0.00),
         scale_score(metrics.get("net_debt_ebitda"), 4.0, 1.0),
@@ -1135,29 +1072,14 @@ def score_corporate(metrics):
         100 if valid_number(metrics.get("fcf_ttm")) and metrics.get("fcf_ttm") > 0 else 40,
     ])
 
-    # NUEVO:
-    # quality_score = negocio / robustez
-    # attractiveness_score = precio / valoración
-    quality_score = avg_available(
-        [quality, cash, solvency, growth, risk],
-        weights=[30, 20, 20, 15, 15]
-    )
-
-    attractiveness_score = valuation
-
-    return {
-        "quality": quality,
-        "cash": cash,
-        "solvency": solvency,
-        "growth": growth,
-        "valuation": valuation,
-        "risk": risk,
-        "quality_score": quality_score,
-        "attractiveness_score": attractiveness_score,
-    }
+    return sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
 
 
 def score_financial(metrics, model):
+    """
+    Calcula los sub-scores para modelos financieros (Bank, Insurance, Financial).
+    Devuelve: sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
+    """
     roe = metrics.get("roe")
     roa = metrics.get("roa")
     pb = metrics.get("pb")
@@ -1166,30 +1088,30 @@ def score_financial(metrics, model):
     if valid_number(roe, pb) and pb > 0:
         roe_pb = roe / pb
 
-    quality = avg_available([
+    sub_quality = avg_available([
         scale_score(roe, 0.08, 0.18),
         scale_score(roa, 0.005, 0.015),
         scale_score(metrics.get("piotroski"), 3, 8),
         scale_score(metrics.get("op_margin"), 0.15, 0.45),
     ])
 
-    solvency = avg_available([
+    sub_solvency = avg_available([
         scale_score(metrics.get("equity_assets"), 0.05, 0.12),
         scale_score(metrics.get("debt_equity"), 3.0, 0.5),
     ])
 
-    cash = avg_available([
+    sub_cash = avg_available([
         scale_score(metrics.get("cash_quality"), 0.50, 1.30),
         metrics.get("consistency_score"),
     ])
 
-    growth = avg_available([
+    sub_growth = avg_available([
         scale_score(metrics.get("revenue_growth"), -0.08, 0.12),
         scale_score(metrics.get("net_income_growth"), -0.10, 0.15),
         metrics.get("consistency_score"),
     ])
 
-    valuation = avg_available([
+    sub_valuation = avg_available([
         scale_score(pb, 3.0, 0.8),
         scale_score(metrics.get("pe"), 25, 8),
         scale_score(roe_pb, 0.04, 0.12),
@@ -1207,29 +1129,14 @@ def score_financial(metrics, model):
     else:
         beneish_score = None
 
-    risk = avg_available([
+    sub_risk = avg_available([
         beneish_score,
         scale_score(metrics.get("shares_growth"), 0.05, 0.00),
         scale_score(metrics.get("equity_assets"), 0.05, 0.12),
     ])
 
-    quality_score = avg_available(
-        [quality, cash, solvency, growth, risk],
-        weights=[30, 15, 25, 15, 15]
-    )
+    return sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
 
-    attractiveness_score = valuation
-
-    return {
-        "quality": quality,
-        "cash": cash,
-        "solvency": solvency,
-        "growth": growth,
-        "valuation": valuation,
-        "risk": risk,
-        "quality_score": quality_score,
-        "attractiveness_score": attractiveness_score,
-    }
 
 def get_fundamental_raw(ticker):
     try:
@@ -1360,7 +1267,9 @@ def get_fundamental_raw(ticker):
         op_margin = safe_div(op_income_ttm, revenue_ttm)
         fcf_margin = safe_div(fcf_ttm, revenue_ttm)
         fcf_yield = safe_div(fcf_ttm, market_cap)
+
         cash_quality = safe_div(cfo_ttm, net_income_ttm)
+
         current_ratio = safe_div(current_assets, current_liabilities)
 
         interest_coverage = np.nan
@@ -1400,9 +1309,83 @@ def get_fundamental_raw(ticker):
             altman_z = calculate_altman_z_v2(bs_ref, is_q if not is_q.empty else is_a, info, market_cap, multiplier)
 
         beneish_m = calculate_beneish_m_score(p_f, p_b, p_cf, prev_pos=prev_pos)
+
         consistency = consistency_score(is_q if not is_q.empty else is_a)
 
-        metrics = {
+        # ── Métricas brutas para scoring ──────────────────────────────────────
+        raw_metrics = {
+            "roic": roic, "op_margin": op_margin, "gross_margin": gross_margin,
+            "piotroski": piotroski, "cash_quality": cash_quality,
+            "fcf_margin": fcf_margin, "cfo_ttm": cfo_ttm, "fcf_ttm": fcf_ttm,
+            "altman_z": altman_z, "net_debt_ebitda": net_debt_ebitda,
+            "interest_coverage": interest_coverage, "current_ratio": current_ratio,
+            "revenue_growth": revenue_growth, "op_income_growth": op_income_growth,
+            "net_income_growth": net_income_growth, "consistency_score": consistency,
+            "pe": pe, "pb": pb, "ev_ebitda": ev_ebitda,
+            "fcf_yield": fcf_yield, "upside": upside,
+            "beneish_m": beneish_m, "shares_growth": shares_growth,
+            "roe": roe, "roa": roa, "equity_assets": equity_assets,
+            "debt_equity": debt_equity,
+            # para compute_confidence
+            "revenue_ttm": revenue_ttm, "op_income_ttm": op_income_ttm,
+            "net_income_ttm": net_income_ttm, "total_assets": total_assets,
+            "equity": equity, "total_debt": total_debt,
+        }
+
+        # ── Confianza ─────────────────────────────────────────────────────────
+        conf_score, conf_grade, available_fields, expected_fields = compute_confidence(
+            model, latest_date, is_q, is_a, raw_metrics
+        )
+
+        # Descartamos datos demasiado pobres
+        if conf_grade == "D":
+            return None
+
+        # ── Sub-scores por modelo ─────────────────────────────────────────────
+        if model == "Corporate":
+            sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk = score_corporate(raw_metrics)
+            model_note = "Modelo corporativo"
+            not_applicable = ""
+        else:
+            sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk = score_financial(raw_metrics, model)
+            model_note = f"Modelo {model}"
+            not_applicable = "Altman-Z industrial, Current Ratio industrial, Debt/EBITDA industrial."
+
+        # ── Eje 1: Calidad de negocio ─────────────────────────────────────────
+        # Calidad = calidad op. 30% + caja 25% + solvencia 20% + crecimiento 15% + riesgo 10%
+        q_score = score_quality_axis(sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk)
+
+        # ── Eje 2: Valoración / Precio-Fundamentales ──────────────────────────
+        v_score = sub_valuation
+
+        if q_score is None and v_score is None:
+            return None
+
+        if q_score is not None:
+            q_score = float(np.clip(q_score, 0, 100))
+        if v_score is not None:
+            v_score = float(np.clip(v_score, 0, 100))
+
+        q_lbl = quality_label(q_score)
+        v_lbl = valuation_label(v_score)
+        profile = fundamental_profile(q_score, v_score)
+
+        # ── Red flags ─────────────────────────────────────────────────────────
+        red_flags = []
+
+        if valid_number(beneish_m) and beneish_m > -1.78:
+            red_flags.append("Beneish sospechoso")
+        if model == "Corporate" and valid_number(altman_z) and altman_z < 1.8:
+            red_flags.append("Altman peligro")
+        if valid_number(net_debt_ebitda) and net_debt_ebitda > 4:
+            red_flags.append("Deuda alta")
+        if valid_number(fcf_ttm) and fcf_ttm < 0:
+            red_flags.append("FCF negativo")
+        if valid_number(shares_growth) and shares_growth > 0.05:
+            red_flags.append("Dilución alta")
+
+        # ── Resultado final ───────────────────────────────────────────────────
+        result = {
             "ticker": ticker,
             "name": name,
             "sector": sector,
@@ -1461,93 +1444,46 @@ def get_fundamental_raw(ticker):
             "altman_z": altman_z,
             "beneish_m": beneish_m,
             "consistency_score": consistency,
-        }
 
-        conf_score, conf_grade, available_fields, expected_fields = compute_confidence(
-            model,
-            latest_date,
-            is_q,
-            is_a,
-            metrics
-        )
-
-        if model == "Corporate":
-            pack = score_corporate(metrics)
-            model_note = "Modelo corporativo: calidad del negocio separada del atractivo de precio."
-            not_applicable = ""
-        else:
-            pack = score_financial(metrics, model)
-            model_note = f"Modelo {model}: calidad separada del atractivo de precio. Sin núcleo industrial clásico."
-            not_applicable = "Altman-Z industrial, Current Ratio industrial, Debt/EBITDA industrial."
-
-        quality_score = pack["quality_score"]
-        attractiveness_score = pack["attractiveness_score"]
-
-        red_flags = []
-
-        if valid_number(beneish_m) and beneish_m > -1.78:
-            red_flags.append("Beneish sospechoso")
-
-        if model == "Corporate" and valid_number(altman_z) and altman_z < 1.8:
-            red_flags.append("Altman peligro")
-
-        if valid_number(net_debt_ebitda) and net_debt_ebitda > 4:
-            red_flags.append("Deuda alta")
-
-        if valid_number(fcf_ttm) and fcf_ttm < 0:
-            red_flags.append("FCF negativo")
-
-        if valid_number(shares_growth) and shares_growth > 0.05:
-            red_flags.append("Dilución alta")
-
-        if quality_score is None and attractiveness_score is None:
-            return None
-
-        if conf_grade == "D":
-            return None
-
-        metrics.update({
+            # ── Los dos ejes protagonistas ──────────────────────────────────
             "has_fundamentals": True,
+            "quality_score": q_score,
+            "quality_label": q_lbl,
+            "valuation_score": v_score,
+            "valuation_label": v_lbl,
+            "fundamental_profile": profile,
 
-            "quality_score": quality_score,
-            "quality_label": quality_label_from_score(quality_score),
-
-            "attractiveness_score": attractiveness_score,
-            "attractiveness_label": price_label_from_score(attractiveness_score),
-
+            # ── Confianza ───────────────────────────────────────────────────
             "confidence_score": conf_score,
             "confidence_grade": conf_grade,
             "available_fields": available_fields,
             "expected_fields": expected_fields,
 
-            "score_quality": pack["quality"],
-            "score_cash": pack["cash"],
-            "score_solvency": pack["solvency"],
-            "score_growth": pack["growth"],
-            "score_valuation": pack["valuation"],
-            "score_risk": pack["risk"],
+            # ── Sub-scores detalle ──────────────────────────────────────────
+            "score_quality": sub_quality,
+            "score_cash": sub_cash,
+            "score_solvency": sub_solvency,
+            "score_growth": sub_growth,
+            "score_valuation": sub_valuation,
+            "score_risk": sub_risk,
 
             "red_flags": ", ".join(red_flags) if red_flags else "",
             "model_note": model_note,
             "not_applicable": not_applicable,
+        }
 
-            # Compatibilidad temporal con el frontend anterior
-            "fundamental_score": quality_score,
-            "fundamental_rating": quality_label_from_score(quality_score),
-            "votos_netos": quality_score,
-        })
-
-        return metrics
+        return result
 
     except Exception:
         return None
+
 
 def add_fundamentals(assets_df, universe_df):
     fund_rows = []
 
     candidates = universe_df[~universe_df["technical_only"]]["ticker"].tolist()
 
-    print(f"🧬 LCrack Fundamental v3: {len(candidates)} activos elegibles...")
+    print(f"🧬 LCrack Fundamental: {len(candidates)} activos elegibles...")
 
     with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
         futures = {executor.submit(get_fundamental_raw, t): t for t in candidates}
@@ -1559,10 +1495,11 @@ def add_fundamentals(assets_df, universe_df):
                 if raw:
                     fund_rows.append(raw)
                     print(
-                        f"   ✅ Fundamental: {ticker} -> "
-                        f"Calidad {raw.get('quality_score'):.1f} · "
-                        f"Precio {raw.get('attractiveness_score'):.1f} · "
-                        f"Conf {raw.get('confidence_grade')}"
+                        f"   ✅ {ticker} · "
+                        f"Calidad {raw.get('quality_score', 0):.0f} ({raw.get('quality_label','—')}) · "
+                        f"Valoración {raw.get('valuation_score', 0):.0f} ({raw.get('valuation_label','—')}) · "
+                        f"Conf {raw.get('confidence_grade','—')} · "
+                        f"{raw.get('fundamental_profile','—')}"
                     )
             except Exception:
                 pass
@@ -1573,52 +1510,48 @@ def add_fundamentals(assets_df, universe_df):
 
     fund_df = pd.DataFrame(fund_rows)
 
-    valid_quality = fund_df["quality_score"].notna()
+    # ── Cuartiles sobre quality_score (no sobre score mezclado) ───────────────
     fund_df["quality_percentile"] = np.nan
+    valid = fund_df["quality_score"].notna()
 
-    if valid_quality.sum() > 0:
-        global_pct = fund_df.loc[valid_quality, "quality_score"].rank(pct=True)
-        fund_df.loc[valid_quality, "quality_percentile"] = global_pct
+    if valid.sum() > 0:
+        # Percentil global
+        global_pct = fund_df.loc[valid, "quality_score"].rank(pct=True)
+        fund_df.loc[valid, "quality_percentile"] = global_pct
 
+        # Intento 1: percentil por modelo + sector si muestra suficiente
         try:
             group_cols = ["fundamental_model", "sector"]
             group_sizes = fund_df.groupby(group_cols)["ticker"].transform("count")
             pct_sector = fund_df.groupby(group_cols)["quality_score"].rank(pct=True)
-
-            mask = valid_quality & (group_sizes >= 4)
+            mask = valid & (group_sizes >= 4)
             fund_df.loc[mask, "quality_percentile"] = pct_sector.loc[mask]
         except Exception:
             pass
 
+        # Intento 2: percentil por modelo
         try:
             group_sizes_model = fund_df.groupby("fundamental_model")["ticker"].transform("count")
             pct_model = fund_df.groupby("fundamental_model")["quality_score"].rank(pct=True)
-
-            mask = valid_quality & (fund_df["quality_percentile"].isna()) & (group_sizes_model >= 4)
+            mask = valid & (fund_df["quality_percentile"].isna()) & (group_sizes_model >= 4)
             fund_df.loc[mask, "quality_percentile"] = pct_model.loc[mask]
         except Exception:
             pass
 
     def q_from_pct(p):
-        if pd.isna(p):
-            return "N/A"
-        if p >= 0.75:
-            return "Q1"
-        if p >= 0.50:
-            return "Q2"
-        if p >= 0.25:
-            return "Q3"
+        if pd.isna(p): return "N/A"
+        if p >= 0.75: return "Q1"
+        if p >= 0.50: return "Q2"
+        if p >= 0.25: return "Q3"
         return "Q4"
 
     fund_df["quality_q"] = fund_df["quality_percentile"].apply(q_from_pct)
-
-    # Compatibilidad temporal
-    fund_df["fundamental_q"] = fund_df["quality_q"]
 
     merged = assets_df.merge(fund_df, on="ticker", how="left", suffixes=("", "_fund"))
     merged["has_fundamentals"] = merged["has_fundamentals"].fillna(False)
 
     return merged
+
 
 # ============================================================
 # MACRO + FX
@@ -1682,17 +1615,12 @@ def macro_context():
     for name, series in data.items():
         if series is None or len(series.dropna()) < 21:
             rows.append({
-                "id": name,
-                "value": None,
-                "roc5": None,
-                "roc20": None,
-                "impact": 0.0,
-                "diag": "🟡 DATA_DELAY"
+                "id": name, "value": None, "roc5": None, "roc20": None,
+                "impact": 0.0, "diag": "🟡 DATA_DELAY"
             })
             continue
 
         s = series.dropna()
-
         v_now = safe_float(s.iloc[-1])
         v_prev_5 = safe_float(s.iloc[-6])
         v_prev_20 = safe_float(s.iloc[-21])
@@ -1751,12 +1679,8 @@ def macro_context():
         score += impact
 
         rows.append({
-            "id": name,
-            "value": v_now,
-            "roc5": roc5,
-            "roc20": roc20,
-            "impact": impact,
-            "diag": diag
+            "id": name, "value": v_now, "roc5": roc5,
+            "roc20": roc20, "impact": impact, "diag": diag
         })
 
     if score >= 4:
@@ -1766,11 +1690,7 @@ def macro_context():
     else:
         label = "🔴 CAUTELOSO"
 
-    return {
-        "score": score,
-        "label": label,
-        "rows": rows
-    }
+    return {"score": score, "label": label, "rows": rows}
 
 
 def currency_context():
@@ -1778,12 +1698,8 @@ def currency_context():
 
     if s is None or len(s) < 60:
         return {
-            "label": "🟡 DATA_DELAY",
-            "score": 0.0,
-            "eurusd": None,
-            "roc5": None,
-            "roc20": None,
-            "sma50": None,
+            "label": "🟡 DATA_DELAY", "score": 0.0, "eurusd": None,
+            "roc5": None, "roc20": None, "sma50": None,
             "diag": "Sin datos suficientes de EUR/USD"
         }
 
@@ -1796,10 +1712,8 @@ def currency_context():
 
     if roc20 > 0.015:
         score -= 2.0
-
     if eurusd > sma50 and roc5 > 0:
         score -= 1.0
-
     if roc20 < -0.015:
         score += 1.5
 
@@ -1817,13 +1731,8 @@ def currency_context():
         diag = "Sin presión clara por divisa"
 
     return {
-        "label": label,
-        "score": score,
-        "eurusd": eurusd,
-        "roc5": roc5,
-        "roc20": roc20,
-        "sma50": sma50,
-        "diag": diag
+        "label": label, "score": score, "eurusd": eurusd,
+        "roc5": roc5, "roc20": roc20, "sma50": sma50, "diag": diag
     }
 
 
@@ -1852,11 +1761,10 @@ INDEX_HTML = r"""
   --yellow: #fde68a;
   --blue: #93c5fd;
   --purple: #d8b4fe;
+  --orange: #fdba74;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
@@ -1868,76 +1776,30 @@ body {
   color: var(--text);
 }
 
-.container {
-  max-width: 1500px;
-  margin: auto;
-  padding: 28px;
-}
+.container { max-width: 1600px; margin: auto; padding: 28px; }
 
-h1 {
-  font-size: 38px;
-  margin: 0;
-  letter-spacing: -.03em;
-}
+h1 { font-size: 38px; margin: 0; letter-spacing: -.03em; }
 
-.subtitle {
-  color: var(--muted);
-  margin-top: 8px;
-  margin-bottom: 24px;
-}
+.subtitle { color: var(--muted); margin-top: 8px; margin-bottom: 24px; }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.grid2 {
-  display: grid;
-  grid-template-columns: 1.1fr .9fr;
-  gap: 14px;
-  margin-bottom: 18px;
-}
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+.grid2 { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-bottom: 18px; }
 
 .card {
-  background: rgba(15, 23, 42, .92);
+  background: rgba(15,23,42,.92);
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 18px;
   box-shadow: 0 10px 35px rgba(0,0,0,.25);
 }
 
-.card h2 {
-  margin-top: 0;
-}
+.card h2 { margin-top: 0; }
 
-.metric-title {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
+.metric-title { color: var(--muted); font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.metric-big { font-size: 28px; font-weight: 950; margin-top: 8px; }
+.small { font-size: 12px; color: var(--muted); margin-top: 5px; }
 
-.metric-big {
-  font-size: 28px;
-  font-weight: 950;
-  margin-top: 8px;
-}
-
-.small {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 5px;
-}
-
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 22px 0;
-}
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
 
 .tab {
   cursor: pointer;
@@ -1955,21 +1817,10 @@ h1 {
   border-color: rgba(59,130,246,.5);
 }
 
-.section {
-  display: none;
-}
+.section { display: none; }
+.section.active { display: block; }
 
-.section.active {
-  display: block;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-}
+table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 14px; border: 1px solid var(--border); }
 
 th {
   background: rgba(30,41,59,.96);
@@ -1983,15 +1834,8 @@ th {
   top: 0;
 }
 
-td {
-  border-top: 1px solid rgba(148,163,184,.13);
-  padding: 11px;
-  vertical-align: top;
-}
-
-tr:hover {
-  background: rgba(30,41,59,.5);
-}
+td { border-top: 1px solid rgba(148,163,184,.13); padding: 11px; vertical-align: top; }
+tr:hover { background: rgba(30,41,59,.5); }
 
 .badge {
   display: inline-block;
@@ -2003,30 +1847,23 @@ tr:hover {
   white-space: nowrap;
 }
 
-.buy { color: var(--green); background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.35); }
-.sell { color: var(--red); background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.35); }
+.buy   { color: var(--green);  background: rgba(34,197,94,.15);   border-color: rgba(34,197,94,.35); }
+.sell  { color: var(--red);    background: rgba(239,68,68,.15);   border-color: rgba(239,68,68,.35); }
 .partial { color: var(--yellow); background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.35); }
-.neutral { color: #cbd5e1; background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
-.mixed { color: var(--purple); background: rgba(168,85,247,.15); border-color: rgba(168,85,247,.35); }
-.q { color: var(--blue); background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); }
+.neutral { color: #cbd5e1;     background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
+.mixed { color: var(--purple); background: rgba(168,85,247,.15);  border-color: rgba(168,85,247,.35); }
+.qbadge { color: var(--blue);  background: rgba(59,130,246,.15);  border-color: rgba(59,130,246,.35); }
+.vbadge { color: var(--orange);background: rgba(251,146,60,.15);  border-color: rgba(251,146,60,.35); }
+.profbadge { color: var(--green); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.25); }
 
-.ticker {
-  font-weight: 950;
-  font-size: 16px;
-}
+/* Barra de score */
+.score-bar-wrap { width: 100%; height: 6px; background: rgba(148,163,184,.2); border-radius: 3px; margin-top: 4px; }
+.score-bar { height: 6px; border-radius: 3px; }
 
-.name {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 3px;
-}
+.ticker { font-weight: 950; font-size: 16px; }
+.name   { color: var(--muted); font-size: 12px; margin-top: 3px; }
 
-.controls {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-}
+.controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
 
 input, select, button {
   border: 1px solid var(--border);
@@ -2036,44 +1873,18 @@ input, select, button {
   padding: 10px;
 }
 
-button {
-  cursor: pointer;
-  font-weight: 800;
-}
+button { cursor: pointer; font-weight: 800; }
+button.primary { background: rgba(37,99,235,.42); border-color: rgba(59,130,246,.55); color: white; }
+button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,113,.4); color: var(--red); }
 
-button.primary {
-  background: rgba(37,99,235,.42);
-  border-color: rgba(59,130,246,.55);
-  color: white;
-}
+.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto; gap: 8px; margin-bottom: 14px; }
 
-button.danger {
-  background: rgba(220,38,38,.22);
-  border-color: rgba(248,113,113,.4);
-  color: var(--red);
-}
+.warning { color: var(--yellow); }
 
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.warning {
-  color: var(--yellow);
-}
-
-.footer {
-  color: var(--muted);
-  margin-top: 28px;
-  font-size: 12px;
-}
+.footer { color: var(--muted); margin-top: 28px; font-size: 12px; }
 
 @media (max-width: 900px) {
-  .grid, .grid2, .form-grid {
-    grid-template-columns: 1fr;
-  }
+  .grid, .grid2, .form-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -2086,13 +1897,14 @@ button.danger {
   <div class="grid" id="summaryCards"></div>
 
   <div class="tabs">
-  <button class="tab active" onclick="showTab('global', this)">🌍 Panel global</button>
-  <button class="tab" onclick="showTab('signals', this)">🎯 Señales</button>
-  <button class="tab" onclick="showTab('universe', this)">📡 Universo</button>
-  <button class="tab" onclick="showTab('portfolio', this)">💼 Mi cartera</button>
-  <button class="tab" onclick="showTab('rules', this)">📘 Reglas</button>
-</div>
+    <button class="tab active" onclick="showTab('global', event)">🌍 Panel global</button>
+    <button class="tab" onclick="showTab('signals', event)">🎯 Señales</button>
+    <button class="tab" onclick="showTab('universe', event)">📡 Universo</button>
+    <button class="tab" onclick="showTab('portfolio', event)">💼 Mi cartera</button>
+    <button class="tab" onclick="showTab('rules', event)">📘 Reglas</button>
+  </div>
 
+  <!-- ═══════════════════ GLOBAL ═══════════════════ -->
   <section id="global" class="section active">
     <div class="grid2">
       <div class="card">
@@ -2106,83 +1918,98 @@ button.danger {
     </div>
   </section>
 
+  <!-- ═══════════════════ SEÑALES ══════════════════ -->
   <section id="signals" class="section">
-  <div class="card">
-    <h2>🎯 Señales recientes</h2>
-    <div class="controls">
-      <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
-
-      <select id="signalType" onchange="renderSignals()">
-        <option value="">Todas las señales</option>
-        <option value="COMPRA">Compras</option>
-        <option value="VENTA">Ventas</option>
-        <option value="MIXTA">Mixtas</option>
-      </select>
-
-      <select id="signalRegime" onchange="renderSignals()">
-        <option value="">Todos los regímenes</option>
-        <option value="ALCISTA">Alcista</option>
-        <option value="LATERAL">Lateral</option>
-        <option value="BAJISTA">Bajista</option>
-      </select>
+    <div class="card">
+      <h2>🎯 Señales recientes</h2>
+      <div class="controls">
+        <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
+        <select id="signalType" onchange="renderSignals()">
+          <option value="">Todas las señales</option>
+          <option value="COMPRA">Compras</option>
+          <option value="VENTA">Ventas</option>
+          <option value="MIXTA">Mixtas</option>
+        </select>
+        <select id="signalRegime" onchange="renderSignals()">
+          <option value="">Todos los regímenes</option>
+          <option value="ALCISTA">Alcista</option>
+          <option value="LATERAL">Lateral</option>
+          <option value="BAJISTA">Bajista</option>
+        </select>
+      </div>
+      <div id="signalsTable"></div>
     </div>
-    <div id="signalsTable"></div>
-  </div>
-</section>
+  </section>
 
-  <div class="controls">
-  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
+  <!-- ═══════════════════ UNIVERSO ═════════════════ -->
+  <section id="universe" class="section">
+    <div class="card">
+      <h2>📡 Universo completo</h2>
+      <div class="controls">
+        <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
 
-  <select id="universeRegime" onchange="renderUniverse()">
-    <option value="">Todos los regímenes</option>
-    <option value="ALCISTA">Alcista</option>
-    <option value="LATERAL">Lateral</option>
-    <option value="BAJISTA">Bajista</option>
-  </select>
+        <select id="universeRegime" onchange="renderUniverse()">
+          <option value="">Todos los regímenes</option>
+          <option value="ALCISTA">Alcista</option>
+          <option value="LATERAL">Lateral</option>
+          <option value="BAJISTA">Bajista</option>
+        </select>
 
-  <select id="fundConfidenceFilter" onchange="renderUniverse()">
-    <option value="">Confianza mínima: Todas</option>
-    <option value="A">Confianza A</option>
-    <option value="B">Confianza B+</option>
-    <option value="C">Confianza C+</option>
-    <option value="D">Confianza D+</option>
-  </select>
+        <select id="fundConfidenceFilter" onchange="renderUniverse()">
+          <option value="">Confianza: todas</option>
+          <option value="A">Confianza A</option>
+          <option value="B">Confianza B+</option>
+          <option value="C">Confianza C+</option>
+        </select>
 
-  <select id="qualityQFilter" onchange="renderUniverse()">
-    <option value="">Todos los Q de calidad</option>
-    <option value="Q1">Q1</option>
-    <option value="Q2">Q2</option>
-    <option value="Q3">Q3</option>
-    <option value="Q4">Q4</option>
-  </select>
+        <select id="fundQualityFilter" onchange="renderUniverse()">
+          <option value="">Calidad: todas</option>
+          <option value="85">Excelente (85+)</option>
+          <option value="75">Muy buena (75+)</option>
+          <option value="65">Buena (65+)</option>
+          <option value="50">Media (50+)</option>
+        </select>
 
-  <input id="qualityMinScore" type="number" min="0" max="100" step="1" placeholder="Calidad mínima" oninput="renderUniverse()">
+        <select id="fundValuationFilter" onchange="renderUniverse()">
+          <option value="">Precio/Fund.: todos</option>
+          <option value="80">Muy barata (80+)</option>
+          <option value="65">Barata (65+)</option>
+          <option value="45">Razonable (45+)</option>
+        </select>
 
-  <select id="priceFilter" onchange="renderUniverse()">
-    <option value="">Todo tipo de precio</option>
-    <option value="Muy barata">Muy barata</option>
-    <option value="Barata">Barata</option>
-    <option value="Atractiva">Atractiva</option>
-    <option value="En precio">En precio</option>
-    <option value="Exigente">Exigente</option>
-    <option value="Cara">Cara</option>
-  </select>
+        <select id="fundProfileFilter" onchange="renderUniverse()">
+          <option value="">Todos los perfiles</option>
+          <option value="Calidad con descuento">🟢 Calidad con descuento</option>
+          <option value="Calidad razonable">✅ Calidad razonable</option>
+          <option value="Calidad cara">💎 Calidad cara</option>
+          <option value="Value especulativo">🟡 Value especulativo</option>
+          <option value="Value trap">🪤 Value trap</option>
+          <option value="Débil y cara">🔴 Débil y cara</option>
+          <option value="Equilibrado">⚖️ Equilibrado</option>
+        </select>
 
-  <label class="small">
-    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
-    Solo con fundamentales
-  </label>
-</div>
+        <select id="fundQFilter" onchange="renderUniverse()">
+          <option value="">Q calidad: todos</option>
+          <option value="Q1">Q1 ⭐ TOP</option>
+          <option value="Q2">Q2 ✅</option>
+          <option value="Q3">Q3 ⚖️</option>
+          <option value="Q4">Q4 ⚠️</option>
+        </select>
+
+        <label class="small" style="display:flex;align-items:center;gap:6px;">
+          <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
+          Solo con fundamentales
+        </label>
+      </div>
       <div id="universeTable"></div>
     </div>
   </section>
 
+  <!-- ═══════════════════ CARTERA ══════════════════ -->
   <section id="portfolio" class="section">
     <div class="card">
       <h2>💼 Mi cartera privada</h2>
-      <p class="small">
-        Tus posiciones se guardan solo en este navegador mediante localStorage. No se suben a GitHub.
-      </p>
+      <p class="small">Tus posiciones se guardan solo en este navegador mediante localStorage. No se suben a GitHub.</p>
 
       <div class="form-grid">
         <input id="pfTicker" placeholder="Ticker, ej. NVDA">
@@ -2204,21 +2031,31 @@ button.danger {
     </div>
   </section>
 
+  <!-- ═══════════════════ REGLAS ════════════════════ -->
   <section id="rules" class="section">
     <div class="card">
       <h2>📘 Reglas del sistema</h2>
-      <p><b>Compra:</b> PVI cruza su media de abajo hacia arriba en las últimas 5 velas.</p>
-      <p><b>Venta 50% PVI:</b> PVI cruza su media de arriba hacia abajo en las últimas 5 velas.</p>
+      <p><b>Compra:</b> PVI cruza su EMA de abajo hacia arriba en las últimas 5 velas.</p>
+      <p><b>Venta 50% PVI:</b> PVI cruza su EMA de arriba hacia abajo en las últimas 5 velas.</p>
       <p><b>Venta 50% McGinley:</b> el precio cruza McGinley de salida de arriba hacia abajo.</p>
-      <p><b>Venta 100%:</b> se activan las dos patas de salida.</p>
-      <p><b>Lateral:</b> demasiados cruces recientes alrededor de McGinley.</p>
-      <p><b>Macro y EUR/USD:</b> notifican contexto, no bloquean señales.</p>
-      <p class="warning"><b>Nota:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
+      <p><b>Venta 100%:</b> se activan las dos patas de salida simultáneamente.</p>
+      <p><b>Lateral:</b> demasiados cruces recientes alrededor de McGinley de régimen.</p>
+
+      <h3>Fundamentales: dos ejes independientes</h3>
+      <p><b>Calidad</b> (0-100): mide la calidad del negocio → rentabilidad, caja, solvencia, crecimiento y riesgo contable. <b>No incluye valoración.</b></p>
+      <p>Escala: Excelente ≥85 · Muy buena ≥75 · Buena ≥65 · Media ≥50 · Débil &lt;50</p>
+      <p><b>Precio/Fundamentales</b> (0-100): mide si el precio de mercado es atractivo o exigente respecto a los fundamentales.</p>
+      <p>Escala: Muy barata ≥80 · Barata ≥65 · Razonable ≥45 · Cara ≥25 · Muy cara &lt;25</p>
+      <p><b>Perfil fundamental:</b> combinación de calidad y valoración en una etiqueta interpretable.</p>
+      <p><b>Confianza A/B/C:</b> fiabilidad del dato (cobertura, frescura, historial). Datos con confianza D se descartan.</p>
+      <p><b>Q calidad:</b> cuartil de calidad dentro del universo analizado.</p>
+      <p><b>Macro y EUR/USD:</b> contexto informativo; no bloquean señales técnicas.</p>
+      <p class="warning"><b>Aviso:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
     </div>
   </section>
 
   <div class="footer">
-    LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed · Actualización automática vía GitHub Actions.
+    LCrack Sovereign · Datos vía yfinance / FRED / Fear & Greed · Actualización automática vía GitHub Actions.
   </div>
 </div>
 
@@ -2228,6 +2065,7 @@ let signals = [];
 let summary = {};
 let portfolio = JSON.parse(localStorage.getItem("sovereign_portfolio") || "[]");
 
+// ── Utilidades ──────────────────────────────────────────────────────────────
 function fmtNum(x, d=2) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
   return Number(x).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d});
@@ -2235,7 +2073,7 @@ function fmtNum(x, d=2) {
 
 function fmtPct(x, d=1) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
-  return (Number(x) * 100).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d}) + "%";
+  return (Number(x)*100).toLocaleString("es-ES",{maximumFractionDigits:d,minimumFractionDigits:d})+"%";
 }
 
 function clsFor(text) {
@@ -2247,54 +2085,57 @@ function clsFor(text) {
   return "neutral";
 }
 
-function badge(text, extra="") {
-  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
+function badge(text, cls="") {
+  return `<span class="badge ${cls || clsFor(text)}">${text || "—"}</span>`;
 }
 
-function priceClass(label) {
-  label = String(label || "");
-  if (label === "Muy barata" || label === "Barata" || label === "Atractiva") return "buy";
-  if (label === "En precio") return "neutral";
-  if (label === "Exigente") return "partial";
-  if (label === "Cara") return "sell";
-  return "neutral";
+function scoreBar(val, color="#3b82f6") {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return "";
+  const pct = Math.max(0, Math.min(100, Number(val)));
+  return `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%;background:${color}"></div></div>`;
 }
 
-function priceBadge(label) {
-  return `<span class="badge ${priceClass(label)}">${label || "—"}</span>`;
+function qualityColor(score) {
+  if (!score && score !== 0) return "#64748b";
+  if (score >= 85) return "#86efac";
+  if (score >= 75) return "#4ade80";
+  if (score >= 65) return "#a3e635";
+  if (score >= 50) return "#fde68a";
+  return "#fca5a5";
 }
 
-function qLabel(q) {
-  if (q === "Q1") return "Q1 ⭐ TOP";
-  if (q === "Q2") return "Q2 ✅";
-  if (q === "Q3") return "Q3 ⚖️";
-  if (q === "Q4") return "Q4 ⚠️";
-  return "—";
+function valuationColor(score) {
+  if (!score && score !== 0) return "#64748b";
+  if (score >= 80) return "#86efac";
+  if (score >= 65) return "#4ade80";
+  if (score >= 45) return "#fde68a";
+  if (score >= 25) return "#fb923c";
+  return "#fca5a5";
 }
-function showTab(id, el) {
+
+function showTab(id, ev) {
   document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  if (el) el.classList.add("active");
+  if (ev && ev.target) ev.target.classList.add("active");
 }
 
+// ── Carga de datos ───────────────────────────────────────────────────────────
 async function loadData() {
-  try {
-    allAssets = await fetch("data/all_assets.json").then(r => r.json());
-    signals = await fetch("data/signals.json").then(r => r.json());
-    summary = await fetch("data/summary.json").then(r => r.json());
+  [allAssets, signals, summary] = await Promise.all([
+    fetch("data/all_assets.json").then(r => r.json()),
+    fetch("data/signals.json").then(r => r.json()),
+    fetch("data/summary.json").then(r => r.json()),
+  ]);
 
-    renderSummary();
-    renderGlobal();
-    renderSignals();
-    renderUniverse();
-    renderPortfolio();
-  } catch (err) {
-    console.error("Error cargando datos:", err);
-    document.getElementById("subtitle").innerText = "Error cargando datos de la miniapp.";
-  }
+  renderSummary();
+  renderGlobal();
+  renderSignals();
+  renderUniverse();
+  renderPortfolio();
 }
 
+// ── Summary cards ────────────────────────────────────────────────────────────
 function renderSummary() {
   document.getElementById("subtitle").innerText =
     `Última actualización: ${summary.generated_at || "—"} · Activos analizados: ${summary.total_assets || 0}`;
@@ -2315,6 +2156,7 @@ function renderSummary() {
   `).join("");
 }
 
+// ── Panel global ─────────────────────────────────────────────────────────────
 function renderGlobal() {
   const rows = (summary.macro?.rows || []).map(r => `
     <tr>
@@ -2330,9 +2172,7 @@ function renderGlobal() {
   document.getElementById("macroTable").innerHTML = `
     <table>
       <thead>
-        <tr>
-          <th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th>
-        </tr>
+        <tr><th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -2354,698 +2194,93 @@ function renderGlobal() {
   `;
 }
 
-Sí: **ya he visto por qué se queda en blanco**.  
-No es una sola cosa; hay **un error JS fatal** que rompe toda la página, y además **2-3 incoherencias** que te van a dar problemas aunque la página cargue.
-
----
-
-# El problema principal: el HTML/JS está roto
-
-## Error fatal
-Tienes esto en el bloque `<script>`:
-
-```javascript
-function badge(text, extra="") 
-function priceClass(label) {
-  ...
-}
-
-function priceBadge(label) {
-  ...
-}
-{
-  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
-}
-```
-
-Eso es **JavaScript inválido**.  
-En cuanto el navegador llega ahí, **revienta todo el script** y por eso la app queda prácticamente en blanco.
-
----
-
-# Además hay otros 3 fallos importantes
-
-## 1. `score_financial()` sigue en versión vieja
-Tu `score_financial` devuelve esto:
-
-```python
-return quality, cash, solvency, growth, valuation, risk, score
-```
-
-pero luego en `get_fundamental_raw()` haces:
-
-```python
-pack = score_financial(metrics, model)
-quality_score = pack["quality_score"]
-```
-
-Eso rompe todos los bancos/financieras/seguros por dentro.  
-No te deja la web en blanco, pero sí te fastidia muchos fundamentales.
-
----
-
-## 2. En la pestaña “Señales” has pegado los filtros del universo
-Tu bloque HTML de `signals` ahora tiene:
-
-- `universeSearch`
-- `universeRegime`
-- `fundConfidenceFilter`
-- etc.
-
-Pero `renderSignals()` espera:
-
-- `signalSearch`
-- `signalType`
-- `signalRegime`
-
-No te rompe todo, pero está mal y da comportamiento raro.
-
----
-
-## 3. IDs duplicados
-Tienes dos veces:
-- `universeSearch`
-- `universeRegime`
-- `fundConfidenceFilter`
-- `onlyFundamentals`
-
-Una vez en señales y otra en universo.
-
-Eso en DOM es mala idea, porque `getElementById()` devolverá la primera coincidencia y te puede liar filtros.
-
----
-
-# Qué te recomiendo hacer
-No ir parcheando trocitos.  
-Te doy **los bloques enteros que debes reemplazar**.
-
----
-
----
-# BLOQUE 1 — Reemplaza `score_financial` completa
-Busca tu función actual `score_financial` y sustitúyela por esta:
-
-```python
-def score_financial(metrics, model):
-    roe = metrics.get("roe")
-    roa = metrics.get("roa")
-    pb = metrics.get("pb")
-
-    roe_pb = np.nan
-    if valid_number(roe, pb) and pb > 0:
-        roe_pb = roe / pb
-
-    quality = avg_available([
-        scale_score(roe, 0.08, 0.18),
-        scale_score(roa, 0.005, 0.015),
-        scale_score(metrics.get("piotroski"), 3, 8),
-        scale_score(metrics.get("op_margin"), 0.15, 0.45),
-    ])
-
-    solvency = avg_available([
-        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
-        scale_score(metrics.get("debt_equity"), 3.0, 0.5),
-    ])
-
-    cash = avg_available([
-        scale_score(metrics.get("cash_quality"), 0.50, 1.30),
-        metrics.get("consistency_score"),
-    ])
-
-    growth = avg_available([
-        scale_score(metrics.get("revenue_growth"), -0.08, 0.12),
-        scale_score(metrics.get("net_income_growth"), -0.10, 0.15),
-        metrics.get("consistency_score"),
-    ])
-
-    valuation = avg_available([
-        scale_score(pb, 3.0, 0.8),
-        scale_score(metrics.get("pe"), 25, 8),
-        scale_score(roe_pb, 0.04, 0.12),
-        scale_score(metrics.get("upside"), -0.10, 0.20),
-    ])
-
-    beneish = metrics.get("beneish_m")
-    if valid_number(beneish):
-        if beneish > -1.78:
-            beneish_score = 30
-        elif beneish > -2.22:
-            beneish_score = 65
-        else:
-            beneish_score = 100
-    else:
-        beneish_score = None
-
-    risk = avg_available([
-        beneish_score,
-        scale_score(metrics.get("shares_growth"), 0.05, 0.00),
-        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
-    ])
-
-    quality_score = avg_available(
-        [quality, cash, solvency, growth, risk],
-        weights=[30, 15, 25, 15, 15]
-    )
-
-    attractiveness_score = valuation
-
-    return {
-        "quality": quality,
-        "cash": cash,
-        "solvency": solvency,
-        "growth": growth,
-        "valuation": valuation,
-        "risk": risk,
-        "quality_score": quality_score,
-        "attractiveness_score": attractiveness_score,
-    }
-```
-
----
-
-# BLOQUE 2 — Reemplaza TODA la parte de tabs/botones en HTML
-Busca este bloque:
-
-```html
-<div class="tabs">
-  <button class="tab active" onclick="showTab('global')">🌍 Panel global</button>
-  <button class="tab" onclick="showTab('signals')">🎯 Señales</button>
-  <button class="tab" onclick="showTab('universe')">📡 Universo</button>
-  <button class="tab" onclick="showTab('portfolio')">💼 Mi cartera</button>
-  <button class="tab" onclick="showTab('rules')">📘 Reglas</button>
-</div>
-```
-
-y sustitúyelo por este:
-
-```html
-<div class="tabs">
-  <button class="tab active" onclick="showTab('global', this)">🌍 Panel global</button>
-  <button class="tab" onclick="showTab('signals', this)">🎯 Señales</button>
-  <button class="tab" onclick="showTab('universe', this)">📡 Universo</button>
-  <button class="tab" onclick="showTab('portfolio', this)">💼 Mi cartera</button>
-  <button class="tab" onclick="showTab('rules', this)">📘 Reglas</button>
-</div>
-```
-
----
-
-# BLOQUE 3 — Reemplaza la sección HTML de “Señales”
-Busca todo este bloque:
-
-```html
-<section id="signals" class="section">
-  <div class="card">
-    <h2>🎯 Señales recientes</h2>
-    <div class="controls">
-      ...
-    </div>
-    <div id="signalsTable"></div>
-  </div>
-</section>
-```
-
-y sustitúyelo entero por este:
-
-```html
-<section id="signals" class="section">
-  <div class="card">
-    <h2>🎯 Señales recientes</h2>
-    <div class="controls">
-      <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
-
-      <select id="signalType" onchange="renderSignals()">
-        <option value="">Todas las señales</option>
-        <option value="COMPRA">Compras</option>
-        <option value="VENTA">Ventas</option>
-        <option value="MIXTA">Mixtas</option>
-      </select>
-
-      <select id="signalRegime" onchange="renderSignals()">
-        <option value="">Todos los regímenes</option>
-        <option value="ALCISTA">Alcista</option>
-        <option value="LATERAL">Lateral</option>
-        <option value="BAJISTA">Bajista</option>
-      </select>
-    </div>
-    <div id="signalsTable"></div>
-  </div>
-</section>
-```
-
----
-
-# BLOQUE 4 — Reemplaza la sección HTML de “Universo”
-Busca tu bloque actual de `<section id="universe"...` y reemplaza solo el contenido de `controls` por este:
-
-```html
-<div class="controls">
-  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
-
-  <select id="universeRegime" onchange="renderUniverse()">
-    <option value="">Todos los regímenes</option>
-    <option value="ALCISTA">Alcista</option>
-    <option value="LATERAL">Lateral</option>
-    <option value="BAJISTA">Bajista</option>
-  </select>
-
-  <select id="fundConfidenceFilter" onchange="renderUniverse()">
-    <option value="">Confianza mínima: Todas</option>
-    <option value="A">Confianza A</option>
-    <option value="B">Confianza B+</option>
-    <option value="C">Confianza C+</option>
-    <option value="D">Confianza D+</option>
-  </select>
-
-  <select id="qualityQFilter" onchange="renderUniverse()">
-    <option value="">Todos los Q de calidad</option>
-    <option value="Q1">Q1</option>
-    <option value="Q2">Q2</option>
-    <option value="Q3">Q3</option>
-    <option value="Q4">Q4</option>
-  </select>
-
-  <input id="qualityMinScore" type="number" min="0" max="100" step="1" placeholder="Calidad mínima" oninput="renderUniverse()">
-
-  <select id="priceFilter" onchange="renderUniverse()">
-    <option value="">Todo tipo de precio</option>
-    <option value="Muy barata">Muy barata</option>
-    <option value="Barata">Barata</option>
-    <option value="Atractiva">Atractiva</option>
-    <option value="En precio">En precio</option>
-    <option value="Exigente">Exigente</option>
-    <option value="Cara">Cara</option>
-  </select>
-
-  <label class="small">
-    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
-    Solo con fundamentales
-  </label>
-</div>
-```
-
----
-
-# BLOQUE 5 — Reemplaza desde `function clsFor` hasta `function qLabel`
-Ahora viene el error grande.
-
-Busca este trozo actual:
-
-```javascript
-function clsFor(text) {
-  ...
-}
-
-function badge(text, extra="") 
-function priceClass(label) {
-  ...
-}
-
-function priceBadge(label) {
-  ...
-}
-{
-  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
-}
-
-function qLabel(q) {
-  ...
-}
-```
-
-y sustitúyelo entero por este bloque correcto:
-
-```javascript
-function clsFor(text) {
-  text = String(text || "");
-  if (text.includes("COMPRA") || text.includes("ALCISTA") || text.includes("MANTENER")) return "buy";
-  if (text.includes("VENTA 100") || text.includes("BAJISTA") || text.includes("VENDER TODO")) return "sell";
-  if (text.includes("VENTA") || text.includes("LATERAL") || text.includes("REDUCIR") || text.includes("STOP")) return "partial";
-  if (text.includes("MIXTA")) return "mixed";
-  return "neutral";
-}
-
-function badge(text, extra="") {
-  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
-}
-
-function priceClass(label) {
-  label = String(label || "");
-  if (label === "Muy barata" || label === "Barata" || label === "Atractiva") return "buy";
-  if (label === "En precio") return "neutral";
-  if (label === "Exigente") return "partial";
-  if (label === "Cara") return "sell";
-  return "neutral";
-}
-
-function priceBadge(label) {
-  return `<span class="badge ${priceClass(label)}">${label || "—"}</span>`;
-}
-
-function qLabel(q) {
-  if (q === "Q1") return "Q1 ⭐ TOP";
-  if (q === "Q2") return "Q2 ✅";
-  if (q === "Q3") return "Q3 ⚖️";
-  if (q === "Q4") return "Q4 ⚠️";
-  return "—";
-}
-```
-
----
-
-# BLOQUE 6 — Reemplaza `showTab`
-Busca:
-
-```javascript
-function showTab(id) {
-  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
-  event.target.classList.add("active");
-}
-```
-
-y sustitúyelo por:
-
-```javascript
-function showTab(id, el) {
-  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-  document.getElementById(id).classList.add("active");
-  if (el) el.classList.add("active");
-}
-```
-
----
-
-# BLOQUE 7 — Reemplaza `loadData`
-Para que si vuelve a romper algo, no se quede silenciosamente en blanco.
-
-Busca:
-
-```javascript
-async function loadData() {
-  allAssets = await fetch("data/all_assets.json").then(r => r.json());
-  signals = await fetch("data/signals.json").then(r => r.json());
-  summary = await fetch("data/summary.json").then(r => r.json());
-
-  renderSummary();
-  renderGlobal();
-  renderSignals();
-  renderUniverse();
-  renderPortfolio();
-}
-```
-
-y sustitúyelo por:
-
-```javascript
-async function loadData() {
-  try {
-    allAssets = await fetch("data/all_assets.json").then(r => r.json());
-    signals = await fetch("data/signals.json").then(r => r.json());
-    summary = await fetch("data/summary.json").then(r => r.json());
-
-    renderSummary();
-    renderGlobal();
-    renderSignals();
-    renderUniverse();
-    renderPortfolio();
-  } catch (err) {
-    console.error("Error cargando datos:", err);
-    document.getElementById("subtitle").innerText = "Error cargando datos de la miniapp.";
-  }
-}
-```
-
----
-
-# BLOQUE 8 — Reemplaza `renderUniverse`
-Tu versión actual ya está cerca, pero te dejo una completa y consistente con los nuevos filtros:
-
-```javascript
-function renderUniverse() {
-  const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
-  const regime = document.getElementById("universeRegime")?.value || "";
-  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
-  const qualityQFilter = document.getElementById("qualityQFilter")?.value || "";
-  const priceFilter = document.getElementById("priceFilter")?.value || "";
-
-  const qualityMinRaw = document.getElementById("qualityMinScore")?.value;
-  const qualityMin = qualityMinRaw === "" || qualityMinRaw === undefined ? null : Number(qualityMinRaw);
-
-  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
-
-  let data = allAssets.slice();
-
-  if (q) {
-    data = data.filter(a =>
-      String(a.ticker || "").toUpperCase().includes(q) ||
-      String(a.name || "").toUpperCase().includes(q) ||
-      String(a.sector || "").toUpperCase().includes(q) ||
-      String(a.industry || "").toUpperCase().includes(q)
-    );
+// ── Bloque fundamental para señales y universo ───────────────────────────────
+function fundBlock(a) {
+  const hasFund = a.has_fundamentals === true
+    && (a.quality_score !== null && a.quality_score !== undefined
+        || a.valuation_score !== null && a.valuation_score !== undefined);
+
+  if (!hasFund) {
+    return `<div class="small" style="color:var(--muted)">Sin fundamentales / técnico-only</div>`;
   }
 
-  if (regime) {
-    data = data.filter(a => String(a.regime || "").includes(regime));
-  }
-
-  if (onlyFund) {
-    data = data.filter(a => a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined);
-  }
-
-  if (confFilter) {
-    data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
-  }
-
-  if (qualityQFilter) {
-    data = data.filter(a => String(a.quality_q || "") === qualityQFilter);
-  }
-
-  if (priceFilter) {
-    data = data.filter(a => String(a.attractiveness_label || "") === priceFilter);
-  }
-
-  if (qualityMin !== null && !Number.isNaN(qualityMin)) {
-    data = data.filter(a => Number(a.quality_score) >= qualityMin);
-  }
-
-  data = data.sort((a, b) => {
-    const qa = (a.quality_score === null || a.quality_score === undefined) ? -1 : Number(a.quality_score);
-    const qb = (b.quality_score === null || b.quality_score === undefined) ? -1 : Number(b.quality_score);
-    if (qb !== qa) return qb - qa;
-
-    const pa = (a.attractiveness_score === null || a.attractiveness_score === undefined) ? -1 : Number(a.attractiveness_score);
-    const pb = (b.attractiveness_score === null || b.attractiveness_score === undefined) ? -1 : Number(b.attractiveness_score);
-    if (pb !== pa) return pb - pa;
-
-    return String(a.ticker || "").localeCompare(String(b.ticker || ""));
-  });
-
-  const rows = data.map(a => `
-    <tr>
-      <td>
-        <div class="ticker">${a.ticker || "—"}</div>
-        <div class="name">${a.name || "—"}</div>
-      </td>
-      <td>${badge(a.main_signal || "—")}</td>
-      <td>${badge(a.regime || "—")}</td>
-      <td>${fmtNum(a.close,2)}</td>
-      <td>${fundSummary(a)}</td>
-      <td>${priceBadge(a.attractiveness_label || "—")}</td>
-      <td>
-        ${a.pvi_status || "—"}
-        <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-      </td>
-      <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-      <td>${a.bucket || "—"}</td>
-    </tr>
-  `).join("");
-
-  document.getElementById("universeTable").innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Activo</th>
-          <th>Señal</th>
-          <th>Régimen</th>
-          <th>Precio</th>
-          <th>Calidad</th>
-          <th>Atractivo precio</th>
-          <th>PVI</th>
-          <th>Dist. McG</th>
-          <th>Universo</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-```
-
----
-
-# BLOQUE 9 — Reemplaza `fundSummary`
-```javascript
-function fundSummary(a) {
-  if (!(a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined)) {
-    return "—";
-  }
-
-  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
-    ? a.attractiveness_score
-    : null;
-
-  const attrLabel = a.attractiveness_label || "—";
+  const qS = a.quality_score;
+  const vS = a.valuation_score;
+  const qLbl = a.quality_label || "—";
+  const vLbl = a.valuation_label || "—";
+  const prof = a.fundamental_profile || "—";
+  const conf = a.confidence_grade || "—";
+  const qQ = a.quality_q || "—";
+  const model = a.fundamental_model || "—";
+  const period = a.period_label || "N/A";
 
   return `
-    <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+      <span class="badge qbadge">Calidad ${fmtNum(qS,0)} · ${qLbl}</span>
+      <span class="badge vbadge">Precio/Fund. ${fmtNum(vS,0)} · ${vLbl}</span>
+      <span class="badge neutral">Conf ${conf}</span>
+      <span class="badge qbadge">${qQ}</span>
+    </div>
+
+    <div style="margin-bottom:4px">
+      ${scoreBar(qS, qualityColor(qS))}
+    </div>
+    <div style="margin-bottom:6px">
+      ${scoreBar(vS, valuationColor(vS))}
+    </div>
+
+    <div class="small" style="margin-bottom:4px">
+      <span class="badge profbadge">${prof}</span>
+    </div>
+
     <div class="small">
-      ${a.quality_label || "—"} · ${a.quality_q || "—"} · Conf ${a.confidence_grade || "—"}
+      Calidad: ${fmtNum(a.score_quality,0)} op · ${fmtNum(a.score_cash,0)} caja ·
+               ${fmtNum(a.score_solvency,0)} solv · ${fmtNum(a.score_growth,0)} crec ·
+               ${fmtNum(a.score_risk,0)} riesgo
     </div>
     <div class="small">
-      Precio ${fmtNum(attrScore,1)}/100 · ${attrLabel}
+      ROIC ${fmtPct(a.roic,1)} · ROE ${fmtPct(a.roe,1)} · FCF Yield ${fmtPct(a.fcf_yield,1)} ·
+      Altman ${fmtNum(a.altman_z,2)} · Piotroski ${fmtNum(a.piotroski,1)}
     </div>
     <div class="small">
-      ${a.period_label || "N/A"}
+      P/E ${fmtNum(a.pe,1)} · P/B ${fmtNum(a.pb,2)} · ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)} ·
+      Beneish ${fmtNum(a.beneish_m,2)}
     </div>
+    <div class="small" style="color:var(--muted)">${model} · ${period}</div>
     ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
+    ${a.not_applicable ? `<div class="small" style="color:var(--muted)">N/A: ${a.not_applicable}</div>` : ""}
   `;
 }
-```
 
----
-
-# BLOQUE 10 — Reemplaza `signalRow`
-```javascript
+// ── Señales ──────────────────────────────────────────────────────────────────
 function signalRow(a) {
-  const hasFund = a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined;
-
-  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
-    ? a.attractiveness_score
-    : null;
-
-  const attrLabel = a.attractiveness_label || "—";
-
-  const fund = hasFund
-    ? `
-      <div>
-        <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
-        ${badge(a.quality_q || "—", "q")}
-        ${badge(a.quality_label || "—", "q")}
-        ${badge("Conf " + (a.confidence_grade || "—"), "neutral")}
-      </div>
-
-      <div class="small">
-        <b>Precio ${fmtNum(attrScore,1)}/100</b> · ${priceBadge(attrLabel)}
-      </div>
-
-      <div class="small">
-        Periodo: <b>${a.period_label || "N/A"}</b>
-      </div>
-
-      <div class="small">
-        Negocio ${fmtNum(a.score_quality,0)} ·
-        Caja ${fmtNum(a.score_cash,0)} ·
-        Solvencia ${fmtNum(a.score_solvency,0)} ·
-        Crecimiento ${fmtNum(a.score_growth,0)} ·
-        Riesgo ${fmtNum(a.score_risk,0)}
-      </div>
-
-      <div class="small">
-        Valoración ${fmtNum(a.score_valuation,0)} ·
-        ROIC ${fmtPct(a.roic,1)} ·
-        ROE ${fmtPct(a.roe,1)} ·
-        FCF Yield ${fmtPct(a.fcf_yield,1)}
-      </div>
-
-      <div class="small">
-        Altman ${fmtNum(a.altman_z,2)} ·
-        Piotroski ${fmtNum(a.piotroski,1)} ·
-        P/E ${fmtNum(a.pe,1)} ·
-        P/B ${fmtNum(a.pb,2)} ·
-        ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)}
-      </div>
-
-      ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-    `
-    : `<div class="small">Sin fundamentales / técnico-only / datos insuficientes</div>`;
-
   return `
     <tr>
       <td>
-        <div class="ticker">${a.ticker || "—"}</div>
+        <div class="ticker">${a.ticker}</div>
         <div class="name">${a.name || "—"}</div>
       </td>
-      <td>${badge(a.main_signal || "—")}<div class="small">${a.events_text || ""}</div></td>
-      <td>${badge(a.regime || "—")}<div class="small">Cruces: ${a.recent_crosses ?? "—"}</div></td>
       <td>
-        ${fmtNum(a.close,2)}
-        <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
-        <div class="small">
-          PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}
-        </div>
-        <div class="small">
-          Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}
-        </div>
-        <div class="small">
-          Cruce PVI vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}
-        </div>
+        ${badge(a.main_signal)}
+        <div class="small">${a.events_text || ""}</div>
       </td>
-      <td>${fund}</td>
+      <td>
+        ${badge(a.regime)}
+        <div class="small">Cruces: ${a.recent_crosses ?? "—"}</div>
+      </td>
+      <td>
+        <b>${fmtNum(a.close,2)}</b>
+        <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
+        <div class="small">PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+        <div class="small">Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}</div>
+        <div class="small">Cruce vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}</div>
+      </td>
+      <td>${fundBlock(a)}</td>
       <td>${a.bucket || "—"}</td>
     </tr>
   `;
 }
-```
 
----
-
-# El resumen del bug
-## La web está en blanco principalmente por esto:
-```javascript
-function badge(text, extra="") 
-function priceClass(...)
-```
-
-Eso solo ya basta para romperlo todo.
-
-## Y además tienes que arreglar:
-- `score_financial`
-- bloque de filtros de `signals`
-- IDs duplicados
-- `showTab`
-
----
-
-# Cómo comprobar si ya está bien
-## 1. Ejecuta local:
-```bash
-python -m py_compile generate_site.py
-```
-
-## 2. Genera:
-```bash
-python generate_site.py
-```
-
-## 3. Abre el `site/index.html` en el navegador y pulsa `F12`
-Si hay error JS, saldrá en consola.
-
----
-
-# Mi recomendación práctica
-Si quieres ir a tiro fijo:
-1. **corrige primero el JS del `badge()`**
-2. luego `score_financial`
-3. luego bloques HTML de señales/universo
-4. luego `showTab`
-
-Con eso ya debería dejar de salir en blanco.
-
-Si quieres, en el siguiente mensaje te hago algo aún más útil:  
-te devuelvo **solo el bloque `INDEX_HTML` completo ya saneado**, para que lo sustituyas entero y no tengas que perseguir errores de comillas, ids o funciones mezcladas.
 function renderSignals() {
   const q = (document.getElementById("signalSearch")?.value || "").toUpperCase();
   const type = document.getElementById("signalType")?.value || "";
@@ -3053,20 +2288,9 @@ function renderSignals() {
 
   let data = signals.slice();
 
-  if (q) {
-    data = data.filter(a =>
-      String(a.ticker).toUpperCase().includes(q) ||
-      String(a.name).toUpperCase().includes(q)
-    );
-  }
-
-  if (type) {
-    data = data.filter(a => String(a.main_signal || "").includes(type));
-  }
-
-  if (regime) {
-    data = data.filter(a => String(a.regime || "").includes(regime));
-  }
+  if (q)      data = data.filter(a => String(a.ticker).toUpperCase().includes(q) || String(a.name).toUpperCase().includes(q));
+  if (type)   data = data.filter(a => String(a.main_signal || "").includes(type));
+  if (regime) data = data.filter(a => String(a.regime || "").includes(regime));
 
   if (!data.length) {
     document.getElementById("signalsTable").innerHTML = `<p class="small">No hay señales con esos filtros.</p>`;
@@ -3077,7 +2301,7 @@ function renderSignals() {
     <table>
       <thead>
         <tr>
-          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico</th><th>Fundamental</th><th>Universo</th>
+          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico</th><th>Calidad · Precio/Fund.</th><th>Universo</th>
         </tr>
       </thead>
       <tbody>${data.map(signalRow).join("")}</tbody>
@@ -3085,138 +2309,102 @@ function renderSignals() {
   `;
 }
 
+// ── Universo ─────────────────────────────────────────────────────────────────
 function confidenceValue(c) {
-  if (c === "A") return 4;
-  if (c === "B") return 3;
-  if (c === "C") return 2;
-  if (c === "D") return 1;
+  if (c === "A") return 3;
+  if (c === "B") return 2;
+  if (c === "C") return 1;
   return 0;
 }
 
-function fundSummary(a) {
-  if (!(a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined)) {
-    return "—";
-  }
-
-  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
-    ? a.attractiveness_score
-    : null;
-
-  const attrLabel = a.attractiveness_label || "—";
-
-  return `
-    <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
-    <div class="small">
-      ${a.quality_label || "—"} · ${a.quality_q || "—"} · Conf ${a.confidence_grade || "—"}
-    </div>
-    <div class="small">
-      Precio ${fmtNum(attrScore,1)}/100 · ${attrLabel}
-    </div>
-    <div class="small">
-      ${a.period_label || "N/A"}
-    </div>
-    ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-  `;
-}
-
 function renderUniverse() {
-  const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
-  const regime = document.getElementById("universeRegime")?.value || "";
-  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
-  const qualityQFilter = document.getElementById("qualityQFilter")?.value || "";
-  const priceFilter = document.getElementById("priceFilter")?.value || "";
-
-  const qualityMinRaw = document.getElementById("qualityMinScore")?.value;
-  const qualityMin = qualityMinRaw === "" || qualityMinRaw === undefined ? null : Number(qualityMinRaw);
-
-  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
+  const q           = (document.getElementById("universeSearch")?.value || "").toUpperCase();
+  const regime      = document.getElementById("universeRegime")?.value || "";
+  const confFilter  = document.getElementById("fundConfidenceFilter")?.value || "";
+  const qualMin     = document.getElementById("fundQualityFilter")?.value;
+  const valMin      = document.getElementById("fundValuationFilter")?.value;
+  const profileF    = document.getElementById("fundProfileFilter")?.value || "";
+  const qFilter     = document.getElementById("fundQFilter")?.value || "";
+  const onlyFund    = document.getElementById("onlyFundamentals")?.checked || false;
 
   let data = allAssets.slice();
 
   if (q) {
     data = data.filter(a =>
-      String(a.ticker || "").toUpperCase().includes(q) ||
-      String(a.name || "").toUpperCase().includes(q) ||
+      String(a.ticker).toUpperCase().includes(q) ||
+      String(a.name).toUpperCase().includes(q) ||
       String(a.sector || "").toUpperCase().includes(q) ||
       String(a.industry || "").toUpperCase().includes(q)
     );
   }
 
-  if (regime) {
-    data = data.filter(a => String(a.regime || "").includes(regime));
-  }
+  if (regime)   data = data.filter(a => String(a.regime || "").includes(regime));
+  if (onlyFund) data = data.filter(a => a.has_fundamentals === true);
+  if (confFilter) data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
+  if (qualMin)  data = data.filter(a => Number(a.quality_score) >= Number(qualMin));
+  if (valMin)   data = data.filter(a => Number(a.valuation_score) >= Number(valMin));
+  if (profileF) data = data.filter(a => String(a.fundamental_profile || "").includes(profileF));
+  if (qFilter)  data = data.filter(a => String(a.quality_q || "") === qFilter);
 
-  if (onlyFund) {
-    data = data.filter(a => a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined);
-  }
-
-  if (confFilter) {
-    data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
-  }
-
-  if (qualityQFilter) {
-    data = data.filter(a => String(a.quality_q || "") === qualityQFilter);
-  }
-
-  if (priceFilter) {
-    data = data.filter(a => String(a.attractiveness_label || "") === priceFilter);
-  }
-
-  if (qualityMin !== null && !Number.isNaN(qualityMin)) {
-    data = data.filter(a => Number(a.quality_score) >= qualityMin);
-  }
-
+  // Orden: quality_score desc, luego ticker
   data = data.sort((a, b) => {
-    const qa = (a.quality_score === null || a.quality_score === undefined) ? -1 : Number(a.quality_score);
-    const qb = (b.quality_score === null || b.quality_score === undefined) ? -1 : Number(b.quality_score);
+    const qa = a.quality_score === null || a.quality_score === undefined ? -1 : Number(a.quality_score);
+    const qb = b.quality_score === null || b.quality_score === undefined ? -1 : Number(b.quality_score);
     if (qb !== qa) return qb - qa;
-
-    const pa = (a.attractiveness_score === null || a.attractiveness_score === undefined) ? -1 : Number(a.attractiveness_score);
-    const pb = (b.attractiveness_score === null || b.attractiveness_score === undefined) ? -1 : Number(b.attractiveness_score);
-    if (pb !== pa) return pb - pa;
-
-    return String(a.ticker || "").localeCompare(String(b.ticker || ""));
+    return String(a.ticker).localeCompare(String(b.ticker));
   });
 
-  const rows = data.map(a => `
-    <tr>
-      <td>
-        <div class="ticker">${a.ticker || "—"}</div>
-        <div class="name">${a.name || "—"}</div>
-      </td>
-      <td>${badge(a.main_signal || "—")}</td>
-      <td>${badge(a.regime || "—")}</td>
-      <td>${fmtNum(a.close,2)}</td>
-      <td>${fundSummary(a)}</td>
-      <td>${priceBadge(a.attractiveness_label || "—")}</td>
-      <td>
-        ${a.pvi_status || "—"}
-        <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-      </td>
-      <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-      <td>${a.bucket || "—"}</td>
-    </tr>
-  `).join("");
+  const rows = data.map(a => {
+    const hasFund = a.has_fundamentals === true;
+
+    const fundCell = hasFund ? `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
+        <span class="badge qbadge">Cal ${fmtNum(a.quality_score,0)} · ${a.quality_label || "—"}</span>
+        <span class="badge vbadge">Val ${fmtNum(a.valuation_score,0)} · ${a.valuation_label || "—"}</span>
+        <span class="badge neutral">Conf ${a.confidence_grade || "—"}</span>
+        <span class="badge qbadge">${a.quality_q || "—"}</span>
+      </div>
+      <div style="margin-bottom:3px">${scoreBar(a.quality_score, qualityColor(a.quality_score))}</div>
+      <div style="margin-bottom:4px">${scoreBar(a.valuation_score, valuationColor(a.valuation_score))}</div>
+      <div class="small"><span class="badge profbadge">${a.fundamental_profile || "—"}</span></div>
+      <div class="small" style="color:var(--muted)">${a.fundamental_model || "—"} · ${a.period_label || "N/A"}</div>
+      ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
+    ` : `<span class="small" style="color:var(--muted)">—</span>`;
+
+    return `
+      <tr>
+        <td>
+          <div class="ticker">${a.ticker}</div>
+          <div class="name">${a.name || "—"}</div>
+        </td>
+        <td>${badge(a.main_signal || "—")}</td>
+        <td>${badge(a.regime || "—")}</td>
+        <td><b>${fmtNum(a.close,2)}</b></td>
+        <td>${fundCell}</td>
+        <td>
+          ${a.pvi_status || "—"}
+          <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+        </td>
+        <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
+        <td>${a.bucket || "—"}</td>
+      </tr>
+    `;
+  }).join("");
 
   document.getElementById("universeTable").innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Activo</th>
-          <th>Señal</th>
-          <th>Régimen</th>
-          <th>Precio</th>
-          <th>Calidad</th>
-          <th>Atractivo precio</th>
-          <th>PVI</th>
-          <th>Dist. McG</th>
-          <th>Universo</th>
+          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Precio</th>
+          <th>Calidad · Precio/Fund.</th><th>PVI</th><th>Dist. McG</th><th>Universo</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
   `;
 }
+
+// ── Cartera ──────────────────────────────────────────────────────────────────
 function findAsset(ticker) {
   return allAssets.find(a => String(a.ticker).toUpperCase() === String(ticker).toUpperCase());
 }
@@ -3226,11 +2414,11 @@ function savePortfolio() {
 }
 
 function addPosition() {
-  const ticker = document.getElementById("pfTicker").value.trim().toUpperCase();
+  const ticker   = document.getElementById("pfTicker").value.trim().toUpperCase();
   const quantity = parseFloat(document.getElementById("pfQty").value);
   const buyPrice = parseFloat(document.getElementById("pfPrice").value);
-  const buyDate = document.getElementById("pfDate").value;
-  const note = document.getElementById("pfNote").value;
+  const buyDate  = document.getElementById("pfDate").value;
+  const note     = document.getElementById("pfNote").value;
 
   if (!ticker || !quantity || !buyPrice) {
     alert("Ticker, cantidad y precio de compra son obligatorios.");
@@ -3240,21 +2428,12 @@ function addPosition() {
   const asset = findAsset(ticker);
 
   portfolio.push({
-    ticker,
-    name: asset ? asset.name : ticker,
-    quantity,
-    buy_price: buyPrice,
-    buy_date: buyDate,
-    note
+    ticker, name: asset ? asset.name : ticker,
+    quantity, buy_price: buyPrice, buy_date: buyDate, note
   });
 
   savePortfolio();
-
-  document.getElementById("pfTicker").value = "";
-  document.getElementById("pfQty").value = "";
-  document.getElementById("pfPrice").value = "";
-  document.getElementById("pfNote").value = "";
-
+  ["pfTicker","pfQty","pfPrice","pfNote"].forEach(id => document.getElementById(id).value = "");
   renderPortfolio();
 }
 
@@ -3271,54 +2450,25 @@ function clearPortfolio() {
   renderPortfolio();
 }
 
-function systemAction(asset, pos) {
-  if (!asset) {
-    return ["⚪ SIN DATOS", "No hay datos diarios para este activo."];
-  }
+function systemAction(asset) {
+  if (!asset) return ["⚪ SIN DATOS", "No hay datos para este activo."];
 
-  const signal = asset.main_signal || "";
-  const regime = asset.regime || "";
-  const pvi = asset.pvi_status || "";
+  const signal  = asset.main_signal || "";
+  const regime  = asset.regime || "";
+  const pvi     = asset.pvi_status || "";
   const belowMcg = asset.price_below_mcg_exit === true;
-  const dist = asset.dist_to_mcg_exit;
+  const dist    = asset.dist_to_mcg_exit;
 
-  if (signal.includes("VENTA 100")) {
-    return ["🔴 VENDER TODO", "Han saltado las dos patas de salida: PVI y McGinley."];
-  }
-
-  if (signal.includes("VENTA 50% PVI")) {
-    return ["🟠 VENDER 50%", "El PVI cruzó su media hacia abajo."];
-  }
-
-  if (signal.includes("VENTA 50% McGINLEY")) {
-    return ["🟠 VENDER 50%", "El precio cruzó McGinley de arriba hacia abajo."];
-  }
-
-  if (belowMcg) {
-    return ["🟠 REDUCIR / VIGILAR", "El precio está por debajo del McGinley de salida."];
-  }
-
-  if (regime.includes("LATERAL")) {
-    return ["🟡 NO AUMENTAR", "Régimen lateral. Señales menos fiables."];
-  }
-
-  if (regime.includes("BAJISTA")) {
-    return ["🔴 NO AUMENTAR", "Régimen bajista. No conviene aumentar riesgo."];
-  }
-
-  if (regime.includes("ALCISTA") && pvi === "POSITIVO") {
-    return ["🟢 MANTENER", "Tendencia alcista viva y PVI positivo."];
-  }
-
-  if (signal.includes("COMPRA")) {
-    return ["🟢 POSIBLE COMPRA / AÑADIR", "Compra reciente detectada por cruce alcista de PVI."];
-  }
-
-  if (dist !== null && dist !== undefined && Number(dist) < 0.015) {
-    return ["🟠 STOP CERCA", "El precio está muy cerca de McGinley."];
-  }
-
-  return ["⚪ MANTENER / VIGILAR", "Sin señal operativa clara."];
+  if (signal.includes("VENTA 100"))         return ["🔴 VENDER TODO", "Las dos patas de salida están activas."];
+  if (signal.includes("VENTA 50% PVI"))     return ["🟠 VENDER 50%", "PVI cruzó su media hacia abajo."];
+  if (signal.includes("VENTA 50% McGINLEY"))return ["🟠 VENDER 50%", "Precio cruzó McGinley de arriba hacia abajo."];
+  if (belowMcg)                              return ["🟠 REDUCIR / VIGILAR", "Precio por debajo del McGinley de salida."];
+  if (regime.includes("LATERAL"))            return ["🟡 NO AUMENTAR", "Régimen lateral: señales menos fiables."];
+  if (regime.includes("BAJISTA"))            return ["🔴 NO AUMENTAR", "Régimen bajista: no conviene aumentar riesgo."];
+  if (regime.includes("ALCISTA") && pvi === "POSITIVO") return ["🟢 MANTENER", "Tendencia alcista y PVI positivo."];
+  if (signal.includes("COMPRA"))             return ["🟢 POSIBLE COMPRA", "Cruce alcista de PVI reciente."];
+  if (dist !== null && dist !== undefined && Number(dist) < 0.015) return ["🟠 STOP CERCA", "Precio muy cerca de McGinley."];
+  return ["⚪ VIGILAR", "Sin señal operativa clara."];
 }
 
 function renderPortfolio() {
@@ -3328,35 +2478,45 @@ function renderPortfolio() {
     return;
   }
 
-  let totalValue = 0;
-  let totalCost = 0;
+  let totalValue = 0, totalCost = 0;
 
   const rows = portfolio.map((p, i) => {
-    const asset = findAsset(p.ticker);
-    const price = asset ? Number(asset.close) : null;
-    const qty = Number(p.quantity);
-    const buy = Number(p.buy_price);
-
-    const value = price ? qty * price : null;
-    const cost = qty * buy;
-    const pnl = value !== null ? value - cost : null;
+    const asset  = findAsset(p.ticker);
+    const price  = asset ? Number(asset.close) : null;
+    const qty    = Number(p.quantity);
+    const buy    = Number(p.buy_price);
+    const value  = price ? qty * price : null;
+    const cost   = qty * buy;
+    const pnl    = value !== null ? value - cost : null;
     const pnlPct = value !== null && cost ? value / cost - 1 : null;
 
     if (value !== null) totalValue += value;
     totalCost += cost;
 
-    const [action, reason] = systemAction(asset, p);
+    const [action, reason] = systemAction(asset);
+
+    const fundMini = asset && asset.has_fundamentals ? `
+      <div class="small">
+        Cal ${fmtNum(asset.quality_score,0)} (${asset.quality_label || "—"}) ·
+        Val ${fmtNum(asset.valuation_score,0)} (${asset.valuation_label || "—"})
+      </div>
+      <div class="small">${asset.fundamental_profile || "—"}</div>
+    ` : "";
 
     return `
       <tr>
         <td>
           <div class="ticker">${p.ticker}</div>
           <div class="name">${p.name || (asset ? asset.name : "")}</div>
+          ${fundMini}
         </td>
         <td>${fmtNum(qty,4)}</td>
         <td>${fmtNum(buy,2)}</td>
         <td>${price ? fmtNum(price,2) : "—"}</td>
-        <td>${pnlPct !== null ? fmtPct(pnlPct,2) : "—"}<div class="small">${pnl !== null ? fmtNum(pnl,2) : "—"}</div></td>
+        <td>
+          ${pnlPct !== null ? fmtPct(pnlPct,2) : "—"}
+          <div class="small">${pnl !== null ? fmtNum(pnl,2) : "—"}</div>
+        </td>
         <td>${asset ? badge(asset.main_signal || "—") : "—"}<div class="small">${asset ? (asset.events_text || "") : ""}</div></td>
         <td>${asset ? badge(asset.regime || "—") : "—"}</td>
         <td>${badge(action)}<div class="small">${reason}</div></td>
@@ -3366,7 +2526,7 @@ function renderPortfolio() {
     `;
   }).join("");
 
-  const totalPnl = totalValue - totalCost;
+  const totalPnl    = totalValue - totalCost;
   const totalPnlPct = totalCost ? totalValue / totalCost - 1 : null;
 
   document.getElementById("portfolioSummary").innerHTML = `
@@ -3392,30 +2552,23 @@ function renderPortfolio() {
 }
 
 function exportPortfolio() {
-  const blob = new Blob([JSON.stringify(portfolio, null, 2)], {type: "application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "sovereign_portfolio.json";
-  a.click();
+  const blob = new Blob([JSON.stringify(portfolio, null, 2)], {type:"application/json"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = "sovereign_portfolio.json"; a.click();
 }
 
 function importPortfolio(event) {
   const file = event.target.files[0];
   if (!file) return;
-
   const reader = new FileReader();
-
   reader.onload = function(e) {
     try {
       portfolio = JSON.parse(e.target.result);
       savePortfolio();
       renderPortfolio();
-    } catch {
-      alert("No se pudo importar el JSON.");
-    }
+    } catch { alert("No se pudo importar el JSON."); }
   };
-
   reader.readAsText(file);
 }
 
@@ -3439,7 +2592,6 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
 
     universe_df = build_universe_df()
-
     print(f"📡 Universo: {len(universe_df)} activos")
 
     tech_rows = []
@@ -3461,14 +2613,16 @@ def main():
                 print(f"⚠️ Error técnico {ticker}: {e}")
 
     assets_df = pd.DataFrame(tech_rows)
-
     assets_df = add_fundamentals(assets_df, universe_df)
 
     if not assets_df.empty:
         assets_df["sort_signal"] = assets_df["bars_min"].fillna(999)
         assets_df = assets_df.sort_values(["sort_signal", "ticker"], ascending=[True, True])
 
-    signals_df = assets_df[assets_df["has_signal"] == True].copy() if not assets_df.empty else pd.DataFrame()
+    signals_df = (
+        assets_df[assets_df["has_signal"] == True].copy()
+        if not assets_df.empty else pd.DataFrame()
+    )
 
     macro = macro_context()
     fx = currency_context()
@@ -3479,7 +2633,7 @@ def main():
     sell_signals = 0
 
     if not signals_df.empty:
-        buy_signals = int(signals_df["main_signal"].astype(str).str.contains("COMPRA").sum())
+        buy_signals  = int(signals_df["main_signal"].astype(str).str.contains("COMPRA").sum())
         sell_signals = int(signals_df["main_signal"].astype(str).str.contains("VENTA").sum())
 
     summary = {
