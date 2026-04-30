@@ -543,21 +543,44 @@ def avg_available(values, weights=None):
     return float(np.average(clean, weights=clean_w))
 
 
-def rating_from_score(score):
+def quality_label_from_score(score):
     if score is None or pd.isna(score):
         return "N/A"
     score = float(score)
-    if score >= 90:
-        return "A+"
-    if score >= 80:
-        return "A"
-    if score >= 70:
-        return "B+"
-    if score >= 60:
-        return "B"
+
+    if score >= 85:
+        return "Excelente"
+    if score >= 75:
+        return "Muy alta"
+    if score >= 65:
+        return "Alta"
+    if score >= 55:
+        return "Buena"
     if score >= 45:
-        return "C"
-    return "D"
+        return "Aceptable"
+    return "Débil"
+
+
+def price_label_from_score(score):
+    """
+    Score alto = precio atractivo / barato.
+    Score bajo = precio exigente / caro.
+    """
+    if score is None or pd.isna(score):
+        return "N/A"
+    score = float(score)
+
+    if score >= 85:
+        return "Muy barata"
+    if score >= 70:
+        return "Barata"
+    if score >= 55:
+        return "Atractiva"
+    if score >= 40:
+        return "En precio"
+    if score >= 25:
+        return "Exigente"
+    return "Cara"
 
 
 def confidence_grade(score):
@@ -1112,12 +1135,26 @@ def score_corporate(metrics):
         100 if valid_number(metrics.get("fcf_ttm")) and metrics.get("fcf_ttm") > 0 else 40,
     ])
 
-    score = avg_available(
-        [quality, cash, solvency, growth, valuation, risk],
-        weights=[25, 20, 15, 15, 15, 10]
+    # NUEVO:
+    # quality_score = negocio / robustez
+    # attractiveness_score = precio / valoración
+    quality_score = avg_available(
+        [quality, cash, solvency, growth, risk],
+        weights=[30, 20, 20, 15, 15]
     )
 
-    return quality, cash, solvency, growth, valuation, risk, score
+    attractiveness_score = valuation
+
+    return {
+        "quality": quality,
+        "cash": cash,
+        "solvency": solvency,
+        "growth": growth,
+        "valuation": valuation,
+        "risk": risk,
+        "quality_score": quality_score,
+        "attractiveness_score": attractiveness_score,
+    }
 
 
 def score_financial(metrics, model):
@@ -1212,8 +1249,6 @@ def get_fundamental_raw(ticker):
 
         multiplier, reporting_frequency, period_label, latest_date = reporting_context(is_q, is_a)
 
-        # Para Piotroski y Beneish:
-        # anual si hay 2 años; si no, quarterly con same-quarter YoY cuando sea posible
         if not is_a.empty and len(is_a.columns) >= 2:
             p_f, p_b, p_cf = is_a, bs_a, cf_a
             prev_pos = 1
@@ -1245,7 +1280,6 @@ def get_fundamental_raw(ticker):
 
         fcf_ttm = np.nan
         if valid_number(cfo_ttm, capex_ttm):
-            # capex suele venir negativo en cashflow
             fcf_ttm = cfo_ttm + capex_ttm
 
         tax_ttm = get_ttm(is_q, is_a, ["Tax Provision"], multiplier)
@@ -1317,9 +1351,7 @@ def get_fundamental_raw(ticker):
         op_margin = safe_div(op_income_ttm, revenue_ttm)
         fcf_margin = safe_div(fcf_ttm, revenue_ttm)
         fcf_yield = safe_div(fcf_ttm, market_cap)
-
         cash_quality = safe_div(cfo_ttm, net_income_ttm)
-
         current_ratio = safe_div(current_assets, current_liabilities)
 
         interest_coverage = np.nan
@@ -1359,7 +1391,6 @@ def get_fundamental_raw(ticker):
             altman_z = calculate_altman_z_v2(bs_ref, is_q if not is_q.empty else is_a, info, market_cap, multiplier)
 
         beneish_m = calculate_beneish_m_score(p_f, p_b, p_cf, prev_pos=prev_pos)
-
         consistency = consistency_score(is_q if not is_q.empty else is_a)
 
         metrics = {
@@ -1432,13 +1463,16 @@ def get_fundamental_raw(ticker):
         )
 
         if model == "Corporate":
-            quality, cash_score, solvency, growth, valuation, risk, final_score = score_corporate(metrics)
-            model_note = "Modelo corporativo: calidad, caja, solvencia, crecimiento, valoración y riesgo contable."
+            pack = score_corporate(metrics)
+            model_note = "Modelo corporativo: calidad del negocio separada del atractivo de precio."
             not_applicable = ""
         else:
-            quality, cash_score, solvency, growth, valuation, risk, final_score = score_financial(metrics, model)
-            model_note = f"Modelo {model}: no usa Altman/Current Ratio/Debt-EBITDA industrial como núcleo."
+            pack = score_financial(metrics, model)
+            model_note = f"Modelo {model}: calidad separada del atractivo de precio. Sin núcleo industrial clásico."
             not_applicable = "Altman-Z industrial, Current Ratio industrial, Debt/EBITDA industrial."
+
+        quality_score = pack["quality_score"]
+        attractiveness_score = pack["attractiveness_score"]
 
         red_flags = []
 
@@ -1457,45 +1491,41 @@ def get_fundamental_raw(ticker):
         if valid_number(shares_growth) and shares_growth > 0.05:
             red_flags.append("Dilución alta")
 
-        if final_score is None:
+        if quality_score is None and attractiveness_score is None:
             return None
 
-        # Cap por confianza
         if conf_grade == "D":
             return None
-        elif conf_grade == "C":
-            final_score = min(final_score, 70)
-        elif conf_grade == "B":
-            final_score = min(final_score, 90)
-
-        # Cap por Beneish peligroso
-        if valid_number(beneish_m) and beneish_m > -1.78:
-            final_score = min(final_score, 60)
-
-        final_score = float(np.clip(final_score, 0, 100))
 
         metrics.update({
             "has_fundamentals": True,
-            "fundamental_score": final_score,
-            "fundamental_rating": rating_from_score(final_score),
+
+            "quality_score": quality_score,
+            "quality_label": quality_label_from_score(quality_score),
+
+            "attractiveness_score": attractiveness_score,
+            "attractiveness_label": price_label_from_score(attractiveness_score),
+
             "confidence_score": conf_score,
             "confidence_grade": conf_grade,
             "available_fields": available_fields,
             "expected_fields": expected_fields,
 
-            "score_quality": quality,
-            "score_cash": cash_score,
-            "score_solvency": solvency,
-            "score_growth": growth,
-            "score_valuation": valuation,
-            "score_risk": risk,
+            "score_quality": pack["quality"],
+            "score_cash": pack["cash"],
+            "score_solvency": pack["solvency"],
+            "score_growth": pack["growth"],
+            "score_valuation": pack["valuation"],
+            "score_risk": pack["risk"],
 
             "red_flags": ", ".join(red_flags) if red_flags else "",
             "model_note": model_note,
             "not_applicable": not_applicable,
 
-            # Compatibilidad con versiones anteriores
-            "votos_netos": final_score,
+            # Compatibilidad temporal con el frontend anterior
+            "fundamental_score": quality_score,
+            "fundamental_rating": quality_label_from_score(quality_score),
+            "votos_netos": quality_score,
         })
 
         return metrics
@@ -1503,13 +1533,12 @@ def get_fundamental_raw(ticker):
     except Exception:
         return None
 
-
 def add_fundamentals(assets_df, universe_df):
     fund_rows = []
 
     candidates = universe_df[~universe_df["technical_only"]]["ticker"].tolist()
 
-    print(f"🧬 LCrack Fundamental v2: {len(candidates)} activos elegibles...")
+    print(f"🧬 LCrack Fundamental v3: {len(candidates)} activos elegibles...")
 
     with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
         futures = {executor.submit(get_fundamental_raw, t): t for t in candidates}
@@ -1520,7 +1549,12 @@ def add_fundamentals(assets_df, universe_df):
                 raw = fut.result()
                 if raw:
                     fund_rows.append(raw)
-                    print(f"   ✅ Fundamental: {ticker} -> {raw.get('fundamental_score'):.1f} {raw.get('fundamental_rating')} {raw.get('confidence_grade')}")
+                    print(
+                        f"   ✅ Fundamental: {ticker} -> "
+                        f"Calidad {raw.get('quality_score'):.1f} · "
+                        f"Precio {raw.get('attractiveness_score'):.1f} · "
+                        f"Conf {raw.get('confidence_grade')}"
+                    )
             except Exception:
                 pass
 
@@ -1530,33 +1564,29 @@ def add_fundamentals(assets_df, universe_df):
 
     fund_df = pd.DataFrame(fund_rows)
 
-    valid = fund_df["fundamental_score"].notna()
+    valid_quality = fund_df["quality_score"].notna()
+    fund_df["quality_percentile"] = np.nan
 
-    fund_df["sector_percentile"] = np.nan
+    if valid_quality.sum() > 0:
+        global_pct = fund_df.loc[valid_quality, "quality_score"].rank(pct=True)
+        fund_df.loc[valid_quality, "quality_percentile"] = global_pct
 
-    if valid.sum() > 0:
-        global_pct = fund_df.loc[valid, "fundamental_score"].rank(pct=True)
-
-        fund_df.loc[valid, "sector_percentile"] = global_pct
-
-        # Intento 1: percentil por modelo + sector si hay suficiente muestra
         try:
             group_cols = ["fundamental_model", "sector"]
             group_sizes = fund_df.groupby(group_cols)["ticker"].transform("count")
-            pct_sector = fund_df.groupby(group_cols)["fundamental_score"].rank(pct=True)
+            pct_sector = fund_df.groupby(group_cols)["quality_score"].rank(pct=True)
 
-            mask = valid & (group_sizes >= 4)
-            fund_df.loc[mask, "sector_percentile"] = pct_sector.loc[mask]
+            mask = valid_quality & (group_sizes >= 4)
+            fund_df.loc[mask, "quality_percentile"] = pct_sector.loc[mask]
         except Exception:
             pass
 
-        # Intento 2: percentil por modelo si no hay suficiente sector
         try:
             group_sizes_model = fund_df.groupby("fundamental_model")["ticker"].transform("count")
-            pct_model = fund_df.groupby("fundamental_model")["fundamental_score"].rank(pct=True)
+            pct_model = fund_df.groupby("fundamental_model")["quality_score"].rank(pct=True)
 
-            mask = valid & (fund_df["sector_percentile"].isna()) & (group_sizes_model >= 4)
-            fund_df.loc[mask, "sector_percentile"] = pct_model.loc[mask]
+            mask = valid_quality & (fund_df["quality_percentile"].isna()) & (group_sizes_model >= 4)
+            fund_df.loc[mask, "quality_percentile"] = pct_model.loc[mask]
         except Exception:
             pass
 
@@ -1571,17 +1601,15 @@ def add_fundamentals(assets_df, universe_df):
             return "Q3"
         return "Q4"
 
-    fund_df["fundamental_q"] = fund_df["sector_percentile"].apply(q_from_pct)
+    fund_df["quality_q"] = fund_df["quality_percentile"].apply(q_from_pct)
 
-    # Compatibilidad con frontend antiguo
-    fund_df["cuartil"] = fund_df["fundamental_q"]
+    # Compatibilidad temporal
+    fund_df["fundamental_q"] = fund_df["quality_q"]
 
     merged = assets_df.merge(fund_df, on="ticker", how="left", suffixes=("", "_fund"))
-
     merged["has_fundamentals"] = merged["has_fundamentals"].fillna(False)
 
     return merged
-
 
 # ============================================================
 # MACRO + FX
@@ -2073,20 +2101,48 @@ button.danger {
     <div class="card">
       <h2>🎯 Señales recientes</h2>
       <div class="controls">
-        <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
-        <select id="signalType" onchange="renderSignals()">
-          <option value="">Todas las señales</option>
-          <option value="COMPRA">Compras</option>
-          <option value="VENTA">Ventas</option>
-          <option value="MIXTA">Mixtas</option>
-        </select>
-        <select id="signalRegime" onchange="renderSignals()">
-          <option value="">Todos los regímenes</option>
-          <option value="ALCISTA">Alcista</option>
-          <option value="LATERAL">Lateral</option>
-          <option value="BAJISTA">Bajista</option>
-        </select>
-      </div>
+  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
+
+  <select id="universeRegime" onchange="renderUniverse()">
+    <option value="">Todos los regímenes</option>
+    <option value="ALCISTA">Alcista</option>
+    <option value="LATERAL">Lateral</option>
+    <option value="BAJISTA">Bajista</option>
+  </select>
+
+  <select id="fundConfidenceFilter" onchange="renderUniverse()">
+    <option value="">Confianza mínima: Todas</option>
+    <option value="A">Confianza A</option>
+    <option value="B">Confianza B+</option>
+    <option value="C">Confianza C+</option>
+    <option value="D">Confianza D+</option>
+  </select>
+
+  <select id="qualityQFilter" onchange="renderUniverse()">
+    <option value="">Todos los Q de calidad</option>
+    <option value="Q1">Q1</option>
+    <option value="Q2">Q2</option>
+    <option value="Q3">Q3</option>
+    <option value="Q4">Q4</option>
+  </select>
+
+  <input id="qualityMinScore" type="number" min="0" max="100" step="1" placeholder="Calidad mínima" oninput="renderUniverse()">
+
+  <select id="priceFilter" onchange="renderUniverse()">
+    <option value="">Todo tipo de precio</option>
+    <option value="Muy barata">Muy barata</option>
+    <option value="Barata">Barata</option>
+    <option value="Atractiva">Atractiva</option>
+    <option value="En precio">En precio</option>
+    <option value="Exigente">Exigente</option>
+    <option value="Cara">Cara</option>
+  </select>
+
+  <label class="small">
+    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
+    Solo con fundamentales
+  </label>
+</div>
       <div id="signalsTable"></div>
     </div>
   </section>
@@ -2209,7 +2265,20 @@ function clsFor(text) {
   return "neutral";
 }
 
-function badge(text, extra="") {
+function badge(text, extra="") 
+function priceClass(label) {
+  label = String(label || "");
+  if (label === "Muy barata" || label === "Barata" || label === "Atractiva") return "buy";
+  if (label === "En precio") return "neutral";
+  if (label === "Exigente") return "partial";
+  if (label === "Cara") return "sell";
+  return "neutral";
+}
+
+function priceBadge(label) {
+  return `<span class="badge ${priceClass(label)}">${label || "—"}</span>`;
+}
+{
   return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
 }
 
@@ -2300,48 +2369,55 @@ function renderGlobal() {
 }
 
 function signalRow(a) {
-  const hasFund = a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined;
+  const hasFund = a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined;
+
+  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
+    ? a.attractiveness_score
+    : a.price_score;
+
+  const attrLabel = a.attractiveness_label || a.price_label || "—";
 
   const fund = hasFund
     ? `
       <div>
-        <b>${fmtNum(a.fundamental_score,1)}/100</b>
-        ${badge(a.fundamental_rating || "—", "q")}
-        ${badge(a.fundamental_q || "—", "q")}
+        <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
+        ${badge(a.quality_q || "—", "q")}
+        ${badge(a.quality_label || "—", "q")}
         ${badge("Conf " + (a.confidence_grade || "—"), "neutral")}
       </div>
 
       <div class="small">
-        Modelo: <b>${a.fundamental_model || "—"}</b> · Periodo: <b>${a.period_label || "N/A"}</b>
+        <b>Precio ${fmtNum(attrScore,1)}/100</b> · ${priceBadge(attrLabel)}
       </div>
 
       <div class="small">
-        Calidad ${fmtNum(a.score_quality,0)} ·
+        Periodo: <b>${a.period_label || "N/A"}</b>
+      </div>
+
+      <div class="small">
+        Negocio ${fmtNum(a.score_quality,0)} ·
         Caja ${fmtNum(a.score_cash,0)} ·
         Solvencia ${fmtNum(a.score_solvency,0)} ·
         Crecimiento ${fmtNum(a.score_growth,0)} ·
-        Valoración ${fmtNum(a.score_valuation,0)} ·
         Riesgo ${fmtNum(a.score_risk,0)}
       </div>
 
       <div class="small">
+        Valoración ${fmtNum(a.score_valuation,0)} ·
         ROIC ${fmtPct(a.roic,1)} ·
         ROE ${fmtPct(a.roe,1)} ·
-        FCF Yield ${fmtPct(a.fcf_yield,1)} ·
-        Altman ${fmtNum(a.altman_z,2)} ·
-        Piotroski ${fmtNum(a.piotroski,1)}
+        FCF Yield ${fmtPct(a.fcf_yield,1)}
       </div>
 
       <div class="small">
+        Altman ${fmtNum(a.altman_z,2)} ·
+        Piotroski ${fmtNum(a.piotroski,1)} ·
         P/E ${fmtNum(a.pe,1)} ·
         P/B ${fmtNum(a.pb,2)} ·
-        ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)} ·
-        Beneish ${fmtNum(a.beneish_m,2)}
+        ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)}
       </div>
 
       ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-
-      ${a.not_applicable ? `<div class="small">No aplica: ${a.not_applicable}</div>` : ""}
     `
     : `<div class="small">Sin fundamentales / técnico-only / datos insuficientes</div>`;
 
@@ -2357,21 +2433,20 @@ function signalRow(a) {
         ${fmtNum(a.close,2)}
         <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
         <div class="small">
-  PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}
-    </div>
-    <div class="small">
-      Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}
-    </div>
-    <div class="small">
-      Cruce PVI vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}
-    </div>
+          PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}
+        </div>
+        <div class="small">
+          Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}
+        </div>
+        <div class="small">
+          Cruce PVI vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}
+        </div>
       </td>
       <td>${fund}</td>
       <td>${a.bucket || "—"}</td>
     </tr>
   `;
 }
-
 function renderSignals() {
   const q = (document.getElementById("signalSearch")?.value || "").toUpperCase();
   const type = document.getElementById("signalType")?.value || "";
@@ -2420,17 +2495,26 @@ function confidenceValue(c) {
 }
 
 function fundSummary(a) {
-  if (!(a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined)) {
+  if (!(a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined)) {
     return "—";
   }
 
+  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
+    ? a.attractiveness_score
+    : a.price_score;
+
+  const attrLabel = a.attractiveness_label || a.price_label || "—";
+
   return `
-    <b>${fmtNum(a.fundamental_score,1)}/100</b>
+    <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
     <div class="small">
-      ${a.fundamental_rating || "—"} · ${a.fundamental_q || "—"} · Conf ${a.confidence_grade || "—"}
+      ${a.quality_label || "—"} · ${a.quality_q || "—"} · Conf ${a.confidence_grade || "—"}
     </div>
     <div class="small">
-      ${a.fundamental_model || "—"} · ${a.period_label || "N/A"}
+      Precio ${fmtNum(attrScore,1)}/100 · ${attrLabel}
+    </div>
+    <div class="small">
+      ${a.period_label || "N/A"}
     </div>
     ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
   `;
@@ -2439,11 +2523,13 @@ function fundSummary(a) {
 function renderUniverse() {
   const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
   const regime = document.getElementById("universeRegime")?.value || "";
-  const modelFilter = document.getElementById("fundModelFilter")?.value || "";
   const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
-  const qFilter = document.getElementById("fundQFilter")?.value || "";
-  const minScoreRaw = document.getElementById("fundMinScore")?.value;
-  const minScore = minScoreRaw === "" || minScoreRaw === undefined ? null : Number(minScoreRaw);
+  const qualityQFilter = document.getElementById("qualityQFilter")?.value || "";
+  const priceFilter = document.getElementById("priceFilter")?.value || "";
+
+  const qualityMinRaw = document.getElementById("qualityMinScore")?.value;
+  const qualityMin = qualityMinRaw === "" || qualityMinRaw === undefined ? null : Number(qualityMinRaw);
+
   const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
 
   let data = allAssets.slice();
@@ -2462,52 +2548,65 @@ function renderUniverse() {
   }
 
   if (onlyFund) {
-    data = data.filter(a => a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined);
-  }
-
-  if (modelFilter) {
-    data = data.filter(a => String(a.fundamental_model || "") === modelFilter);
+    data = data.filter(a => a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined);
   }
 
   if (confFilter) {
     data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
   }
 
-  if (qFilter) {
-    data = data.filter(a => String(a.fundamental_q || "") === qFilter);
+  if (qualityQFilter) {
+    data = data.filter(a => String(a.quality_q || "") === qualityQFilter);
   }
 
-  if (minScore !== null && !Number.isNaN(minScore)) {
-    data = data.filter(a => Number(a.fundamental_score) >= minScore);
+  if (priceFilter) {
+    data = data.filter(a => {
+      const lbl = a.attractiveness_label || a.price_label || "";
+      return String(lbl) === priceFilter;
+    });
   }
 
-  data = data.sort((a,b) => {
-    const fa = a.fundamental_score === null || a.fundamental_score === undefined ? -1 : Number(a.fundamental_score);
-    const fb = b.fundamental_score === null || b.fundamental_score === undefined ? -1 : Number(b.fundamental_score);
+  if (qualityMin !== null && !Number.isNaN(qualityMin)) {
+    data = data.filter(a => Number(a.quality_score) >= qualityMin);
+  }
 
-    if (fb !== fa) return fb - fa;
+  data = data.sort((a, b) => {
+    const qa = (a.quality_score === null || a.quality_score === undefined) ? -1 : Number(a.quality_score);
+    const qb = (b.quality_score === null || b.quality_score === undefined) ? -1 : Number(b.quality_score);
+
+    if (qb !== qa) return qb - qa;
+
+    const pa = (a.attractiveness_score === null || a.attractiveness_score === undefined) ? -1 : Number(a.attractiveness_score);
+    const pb = (b.attractiveness_score === null || b.attractiveness_score === undefined) ? -1 : Number(b.attractiveness_score);
+
+    if (pb !== pa) return pb - pa;
 
     return String(a.ticker).localeCompare(String(b.ticker));
   });
 
-  const rows = data.map(a => `
-    <tr>
-      <td>
-        <div class="ticker">${a.ticker}</div>
-        <div class="name">${a.name || "—"}</div>
-      </td>
-      <td>${badge(a.main_signal || "—")}</td>
-      <td>${badge(a.regime || "—")}</td>
-      <td>${fmtNum(a.close,2)}</td>
-      <td>${fundSummary(a)}</td>
-      <td>
-      ${a.pvi_status || "—"}
-      <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-    </td>
-      <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-      <td>${a.bucket || "—"}</td>
-    </tr>
-  `).join("");
+  const rows = data.map(a => {
+    const attrLabel = a.attractiveness_label || a.price_label || "—";
+
+    return `
+      <tr>
+        <td>
+          <div class="ticker">${a.ticker}</div>
+          <div class="name">${a.name || "—"}</div>
+        </td>
+        <td>${badge(a.main_signal || "—")}</td>
+        <td>${badge(a.regime || "—")}</td>
+        <td>${fmtNum(a.close,2)}</td>
+        <td>${fundSummary(a)}</td>
+        <td>${priceBadge(attrLabel)}</td>
+        <td>
+          ${a.pvi_status || "—"}
+          <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+        </td>
+        <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
+        <td>${a.bucket || "—"}</td>
+      </tr>
+    `;
+  }).join("");
 
   document.getElementById("universeTable").innerHTML = `
     <table>
@@ -2517,7 +2616,8 @@ function renderUniverse() {
           <th>Señal</th>
           <th>Régimen</th>
           <th>Precio</th>
-          <th>Fundamental</th>
+          <th>Calidad</th>
+          <th>Atractivo precio</th>
           <th>PVI</th>
           <th>Dist. McG</th>
           <th>Universo</th>
@@ -2527,7 +2627,6 @@ function renderUniverse() {
     </table>
   `;
 }
-
 function findAsset(ticker) {
   return allAssets.find(a => String(a.ticker).toUpperCase() === String(ticker).toUpperCase());
 }
