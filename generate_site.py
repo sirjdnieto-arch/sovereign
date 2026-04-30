@@ -25,10 +25,13 @@ warnings.filterwarnings("ignore")
 CONFIG = {
     "LOOKBACK_SIGNAL": 5,
     "PVI_MA": 120,
+    "PVI_SIGNAL_TYPE": "EMA",
     "MCG_REGIME_N": 20,
     "MCG_EXIT_N": 45,
     "LATERAL_LOOKBACK": 20,
-    "PRICE_PERIOD": "2y",
+    "PRICE_PERIOD": "10y",
+    "DROP_TODAY_CANDLE": True,
+    "REQUIRE_CURRENT_SIGNAL_STATE": True,
     "MAX_WORKERS": 8,
 }
 
@@ -183,11 +186,11 @@ def yf_download_prices(ticker, period="2y"):
         df = yf.download(
             ticker,
             period=period,
-            auto_adjust=True,
+            interval="1d",
+            auto_adjust=False,
             progress=False,
             threads=False
         )
-
         df = flatten_yf(df)
 
         if df.empty or "Close" not in df.columns:
@@ -247,7 +250,14 @@ def calculate_mcginley(close, period):
 
 
 def calculate_pvi(df, ma_period):
+    """
+    PVI estilo TradingView/Fosback:
+    - Valor inicial 1000.
+    - Solo acumula variación del cierre cuando Volumen actual > Volumen anterior.
+    - Señal = EMA del PVI.
+    """
     df = df.copy()
+
     df["ROC"] = df["Close"].pct_change().fillna(0)
 
     vols = df["Volume"].fillna(0).values
@@ -262,7 +272,13 @@ def calculate_pvi(df, ma_period):
             pvi.append(pvi[-1])
 
     df["PVI"] = pvi
-    df["PVI_Signal"] = df["PVI"].rolling(ma_period, min_periods=ma_period).mean()
+
+    # TradingView usa EMA, no SMA.
+    df["PVI_Signal"] = (
+        df["PVI"]
+        .ewm(span=ma_period, adjust=False, min_periods=ma_period)
+        .mean()
+    )
 
     return df
 
@@ -295,6 +311,17 @@ def analyze_technical(row):
 
     name, currency, sector = get_name_currency_sector(ticker)
     df = yf_download_prices(ticker, CONFIG["PRICE_PERIOD"])
+
+    # Evitar señales con vela diaria potencialmente incompleta.
+# Esto replica la idea de TradingView: "esperar al cierre del intervalo".
+try:
+    if CONFIG.get("DROP_TODAY_CANDLE", True):
+        today_utc = datetime.now(timezone.utc).date()
+
+        if len(df) > 1 and pd.to_datetime(df.index[-1]).date() == today_utc:
+            df = df.iloc[:-1]
+except Exception:
+    pass
 
     if df.empty or len(df) < CONFIG["PVI_MA"] + 10:
         return {
@@ -331,9 +358,7 @@ def analyze_technical(row):
     pvi_sell_ago = bars_ago_for_signal(df["PVI_Cross_Down"], CONFIG["LOOKBACK_SIGNAL"])
     mcg_sell_ago = bars_ago_for_signal(df["McG_Cross_Down"], CONFIG["LOOKBACK_SIGNAL"])
 
-    has_buy = buy_ago is not None
-    has_pvi_sell = pvi_sell_ago is not None
-    has_mcg_sell = mcg_sell_ago is not None
+ 
 
     above = df["Close"] > df["McG_Regime"]
     recent_crosses = int(
@@ -352,6 +377,43 @@ def analyze_technical(row):
     mcg_exit_now = safe_float(c["McG_Exit"])
     pvi_now = safe_float(c["PVI"])
     pvi_sig_now = safe_float(c["PVI_Signal"])
+
+    pvi_prev = safe_float(df["PVI"].iloc[-2])
+pvi_sig_prev = safe_float(df["PVI_Signal"].iloc[-2])
+
+raw_has_buy = buy_ago is not None
+raw_has_pvi_sell = pvi_sell_ago is not None
+raw_has_mcg_sell = mcg_sell_ago is not None
+
+# La señal solo es válida si el estado actual la confirma.
+if CONFIG.get("REQUIRE_CURRENT_SIGNAL_STATE", True):
+    has_buy = (
+        raw_has_buy
+        and valid_number(pvi_now, pvi_sig_now)
+        and pvi_now > pvi_sig_now
+    )
+
+    has_pvi_sell = (
+        raw_has_pvi_sell
+        and valid_number(pvi_now, pvi_sig_now)
+        and pvi_now < pvi_sig_now
+    )
+
+    has_mcg_sell = (
+        raw_has_mcg_sell
+        and valid_number(close_now, mcg_exit_now)
+        and close_now < mcg_exit_now
+    )
+else:
+    has_buy = raw_has_buy
+    has_pvi_sell = raw_has_pvi_sell
+    has_mcg_sell = raw_has_mcg_sell
+
+pvi_cross_current = (
+    valid_number(pvi_now, pvi_sig_now, pvi_prev, pvi_sig_prev)
+    and pvi_now > pvi_sig_now
+    and pvi_prev <= pvi_sig_prev
+)
 
     if recent_crosses > 2:
         regime = "🟡 LATERAL"
@@ -414,6 +476,10 @@ def analyze_technical(row):
         "pvi": pvi_now,
         "pvi_signal": pvi_sig_now,
         "pvi_status": "POSITIVO" if pvi_now > pvi_sig_now else "NEGATIVO",
+        "pvi_prev": pvi_prev,
+        "pvi_signal_prev": pvi_sig_prev,
+        "pvi_cross_current": bool(pvi_cross_current),
+        "pvi_signal_type": CONFIG.get("PVI_SIGNAL_TYPE", "EMA"),
         "price_below_mcg_exit": bool(close_now < mcg_exit_now) if valid_number(close_now, mcg_exit_now) else False,
         "last_date": str(df.index[-1].date()),
         "error": ""
@@ -2288,7 +2354,15 @@ function signalRow(a) {
       <td>
         ${fmtNum(a.close,2)}
         <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
-        <div class="small">PVI: ${a.pvi_status || "—"}</div>
+        <div class="small">
+  PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}
+    </div>
+    <div class="small">
+      Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}
+    </div>
+    <div class="small">
+      Cruce PVI vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}
+    </div>
       </td>
       <td>${fund}</td>
       <td>${a.bucket || "—"}</td>
@@ -2424,7 +2498,10 @@ function renderUniverse() {
       <td>${badge(a.regime || "—")}</td>
       <td>${fmtNum(a.close,2)}</td>
       <td>${fundSummary(a)}</td>
-      <td>${a.pvi_status || "—"}</td>
+      <td>
+      ${a.pvi_status || "—"}
+      <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+    </td>
       <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
       <td>${a.bucket || "—"}</td>
     </tr>
