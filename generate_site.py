@@ -1173,7 +1173,6 @@ def score_financial(metrics, model):
         scale_score(metrics.get("op_margin"), 0.15, 0.45),
     ])
 
-    # En bancos/aseguradoras esto representa capitalización/solidez, no Altman
     solvency = avg_available([
         scale_score(metrics.get("equity_assets"), 0.05, 0.12),
         scale_score(metrics.get("debt_equity"), 3.0, 0.5),
@@ -1214,13 +1213,23 @@ def score_financial(metrics, model):
         scale_score(metrics.get("equity_assets"), 0.05, 0.12),
     ])
 
-    score = avg_available(
-        [quality, cash, solvency, growth, valuation, risk],
-        weights=[25, 15, 20, 15, 15, 10]
+    quality_score = avg_available(
+        [quality, cash, solvency, growth, risk],
+        weights=[30, 15, 25, 15, 15]
     )
 
-    return quality, cash, solvency, growth, valuation, risk, score
+    attractiveness_score = valuation
 
+    return {
+        "quality": quality,
+        "cash": cash,
+        "solvency": solvency,
+        "growth": growth,
+        "valuation": valuation,
+        "risk": risk,
+        "quality_score": quality_score,
+        "attractiveness_score": attractiveness_score,
+    }
 
 def get_fundamental_raw(ticker):
     try:
@@ -2077,12 +2086,12 @@ button.danger {
   <div class="grid" id="summaryCards"></div>
 
   <div class="tabs">
-    <button class="tab active" onclick="showTab('global')">🌍 Panel global</button>
-    <button class="tab" onclick="showTab('signals')">🎯 Señales</button>
-    <button class="tab" onclick="showTab('universe')">📡 Universo</button>
-    <button class="tab" onclick="showTab('portfolio')">💼 Mi cartera</button>
-    <button class="tab" onclick="showTab('rules')">📘 Reglas</button>
-  </div>
+  <button class="tab active" onclick="showTab('global', this)">🌍 Panel global</button>
+  <button class="tab" onclick="showTab('signals', this)">🎯 Señales</button>
+  <button class="tab" onclick="showTab('universe', this)">📡 Universo</button>
+  <button class="tab" onclick="showTab('portfolio', this)">💼 Mi cartera</button>
+  <button class="tab" onclick="showTab('rules', this)">📘 Reglas</button>
+</div>
 
   <section id="global" class="section active">
     <div class="grid2">
@@ -2098,9 +2107,30 @@ button.danger {
   </section>
 
   <section id="signals" class="section">
-    <div class="card">
-      <h2>🎯 Señales recientes</h2>
-      <div class="controls">
+  <div class="card">
+    <h2>🎯 Señales recientes</h2>
+    <div class="controls">
+      <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
+
+      <select id="signalType" onchange="renderSignals()">
+        <option value="">Todas las señales</option>
+        <option value="COMPRA">Compras</option>
+        <option value="VENTA">Ventas</option>
+        <option value="MIXTA">Mixtas</option>
+      </select>
+
+      <select id="signalRegime" onchange="renderSignals()">
+        <option value="">Todos los regímenes</option>
+        <option value="ALCISTA">Alcista</option>
+        <option value="LATERAL">Lateral</option>
+        <option value="BAJISTA">Bajista</option>
+      </select>
+    </div>
+    <div id="signalsTable"></div>
+  </div>
+</section>
+
+  <div class="controls">
   <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
 
   <select id="universeRegime" onchange="renderUniverse()">
@@ -2137,54 +2167,6 @@ button.danger {
     <option value="Exigente">Exigente</option>
     <option value="Cara">Cara</option>
   </select>
-
-  <label class="small">
-    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
-    Solo con fundamentales
-  </label>
-</div>
-      <div id="signalsTable"></div>
-    </div>
-  </section>
-
-  <section id="universe" class="section">
-    <div class="card">
-      <h2>📡 Universo completo</h2>
-      <div class="controls">
-  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
-
-  <select id="universeRegime" onchange="renderUniverse()">
-    <option value="">Todos los regímenes</option>
-    <option value="ALCISTA">Alcista</option>
-    <option value="LATERAL">Lateral</option>
-    <option value="BAJISTA">Bajista</option>
-  </select>
-
-  <select id="fundModelFilter" onchange="renderUniverse()">
-    <option value="">Todos los modelos fundamentales</option>
-    <option value="Corporate">Corporate</option>
-    <option value="Bank">Bank</option>
-    <option value="Insurance">Insurance</option>
-    <option value="Financial">Financial</option>
-  </select>
-
-  <select id="fundConfidenceFilter" onchange="renderUniverse()">
-    <option value="">Confianza mínima: Todas</option>
-    <option value="A">Confianza A</option>
-    <option value="B">Confianza B+</option>
-    <option value="C">Confianza C+</option>
-    <option value="D">Confianza D+</option>
-  </select>
-
-  <select id="fundQFilter" onchange="renderUniverse()">
-    <option value="">Todos los Q</option>
-    <option value="Q1">Q1</option>
-    <option value="Q2">Q2</option>
-    <option value="Q3">Q3</option>
-    <option value="Q4">Q4</option>
-  </select>
-
-  <input id="fundMinScore" type="number" min="0" max="100" step="1" placeholder="Score mínimo" oninput="renderUniverse()">
 
   <label class="small">
     <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
@@ -2265,7 +2247,10 @@ function clsFor(text) {
   return "neutral";
 }
 
-function badge(text, extra="") 
+function badge(text, extra="") {
+  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
+}
+
 function priceClass(label) {
   label = String(label || "");
   if (label === "Muy barata" || label === "Barata" || label === "Atractiva") return "buy";
@@ -2278,9 +2263,6 @@ function priceClass(label) {
 function priceBadge(label) {
   return `<span class="badge ${priceClass(label)}">${label || "—"}</span>`;
 }
-{
-  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
-}
 
 function qLabel(q) {
   if (q === "Q1") return "Q1 ⭐ TOP";
@@ -2289,24 +2271,28 @@ function qLabel(q) {
   if (q === "Q4") return "Q4 ⚠️";
   return "—";
 }
-
-function showTab(id) {
+function showTab(id, el) {
   document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  event.target.classList.add("active");
+  if (el) el.classList.add("active");
 }
 
 async function loadData() {
-  allAssets = await fetch("data/all_assets.json").then(r => r.json());
-  signals = await fetch("data/signals.json").then(r => r.json());
-  summary = await fetch("data/summary.json").then(r => r.json());
+  try {
+    allAssets = await fetch("data/all_assets.json").then(r => r.json());
+    signals = await fetch("data/signals.json").then(r => r.json());
+    summary = await fetch("data/summary.json").then(r => r.json());
 
-  renderSummary();
-  renderGlobal();
-  renderSignals();
-  renderUniverse();
-  renderPortfolio();
+    renderSummary();
+    renderGlobal();
+    renderSignals();
+    renderUniverse();
+    renderPortfolio();
+  } catch (err) {
+    console.error("Error cargando datos:", err);
+    document.getElementById("subtitle").innerText = "Error cargando datos de la miniapp.";
+  }
 }
 
 function renderSummary() {
@@ -2368,14 +2354,579 @@ function renderGlobal() {
   `;
 }
 
+Sí: **ya he visto por qué se queda en blanco**.  
+No es una sola cosa; hay **un error JS fatal** que rompe toda la página, y además **2-3 incoherencias** que te van a dar problemas aunque la página cargue.
+
+---
+
+# El problema principal: el HTML/JS está roto
+
+## Error fatal
+Tienes esto en el bloque `<script>`:
+
+```javascript
+function badge(text, extra="") 
+function priceClass(label) {
+  ...
+}
+
+function priceBadge(label) {
+  ...
+}
+{
+  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
+}
+```
+
+Eso es **JavaScript inválido**.  
+En cuanto el navegador llega ahí, **revienta todo el script** y por eso la app queda prácticamente en blanco.
+
+---
+
+# Además hay otros 3 fallos importantes
+
+## 1. `score_financial()` sigue en versión vieja
+Tu `score_financial` devuelve esto:
+
+```python
+return quality, cash, solvency, growth, valuation, risk, score
+```
+
+pero luego en `get_fundamental_raw()` haces:
+
+```python
+pack = score_financial(metrics, model)
+quality_score = pack["quality_score"]
+```
+
+Eso rompe todos los bancos/financieras/seguros por dentro.  
+No te deja la web en blanco, pero sí te fastidia muchos fundamentales.
+
+---
+
+## 2. En la pestaña “Señales” has pegado los filtros del universo
+Tu bloque HTML de `signals` ahora tiene:
+
+- `universeSearch`
+- `universeRegime`
+- `fundConfidenceFilter`
+- etc.
+
+Pero `renderSignals()` espera:
+
+- `signalSearch`
+- `signalType`
+- `signalRegime`
+
+No te rompe todo, pero está mal y da comportamiento raro.
+
+---
+
+## 3. IDs duplicados
+Tienes dos veces:
+- `universeSearch`
+- `universeRegime`
+- `fundConfidenceFilter`
+- `onlyFundamentals`
+
+Una vez en señales y otra en universo.
+
+Eso en DOM es mala idea, porque `getElementById()` devolverá la primera coincidencia y te puede liar filtros.
+
+---
+
+# Qué te recomiendo hacer
+No ir parcheando trocitos.  
+Te doy **los bloques enteros que debes reemplazar**.
+
+---
+
+---
+# BLOQUE 1 — Reemplaza `score_financial` completa
+Busca tu función actual `score_financial` y sustitúyela por esta:
+
+```python
+def score_financial(metrics, model):
+    roe = metrics.get("roe")
+    roa = metrics.get("roa")
+    pb = metrics.get("pb")
+
+    roe_pb = np.nan
+    if valid_number(roe, pb) and pb > 0:
+        roe_pb = roe / pb
+
+    quality = avg_available([
+        scale_score(roe, 0.08, 0.18),
+        scale_score(roa, 0.005, 0.015),
+        scale_score(metrics.get("piotroski"), 3, 8),
+        scale_score(metrics.get("op_margin"), 0.15, 0.45),
+    ])
+
+    solvency = avg_available([
+        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
+        scale_score(metrics.get("debt_equity"), 3.0, 0.5),
+    ])
+
+    cash = avg_available([
+        scale_score(metrics.get("cash_quality"), 0.50, 1.30),
+        metrics.get("consistency_score"),
+    ])
+
+    growth = avg_available([
+        scale_score(metrics.get("revenue_growth"), -0.08, 0.12),
+        scale_score(metrics.get("net_income_growth"), -0.10, 0.15),
+        metrics.get("consistency_score"),
+    ])
+
+    valuation = avg_available([
+        scale_score(pb, 3.0, 0.8),
+        scale_score(metrics.get("pe"), 25, 8),
+        scale_score(roe_pb, 0.04, 0.12),
+        scale_score(metrics.get("upside"), -0.10, 0.20),
+    ])
+
+    beneish = metrics.get("beneish_m")
+    if valid_number(beneish):
+        if beneish > -1.78:
+            beneish_score = 30
+        elif beneish > -2.22:
+            beneish_score = 65
+        else:
+            beneish_score = 100
+    else:
+        beneish_score = None
+
+    risk = avg_available([
+        beneish_score,
+        scale_score(metrics.get("shares_growth"), 0.05, 0.00),
+        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
+    ])
+
+    quality_score = avg_available(
+        [quality, cash, solvency, growth, risk],
+        weights=[30, 15, 25, 15, 15]
+    )
+
+    attractiveness_score = valuation
+
+    return {
+        "quality": quality,
+        "cash": cash,
+        "solvency": solvency,
+        "growth": growth,
+        "valuation": valuation,
+        "risk": risk,
+        "quality_score": quality_score,
+        "attractiveness_score": attractiveness_score,
+    }
+```
+
+---
+
+# BLOQUE 2 — Reemplaza TODA la parte de tabs/botones en HTML
+Busca este bloque:
+
+```html
+<div class="tabs">
+  <button class="tab active" onclick="showTab('global')">🌍 Panel global</button>
+  <button class="tab" onclick="showTab('signals')">🎯 Señales</button>
+  <button class="tab" onclick="showTab('universe')">📡 Universo</button>
+  <button class="tab" onclick="showTab('portfolio')">💼 Mi cartera</button>
+  <button class="tab" onclick="showTab('rules')">📘 Reglas</button>
+</div>
+```
+
+y sustitúyelo por este:
+
+```html
+<div class="tabs">
+  <button class="tab active" onclick="showTab('global', this)">🌍 Panel global</button>
+  <button class="tab" onclick="showTab('signals', this)">🎯 Señales</button>
+  <button class="tab" onclick="showTab('universe', this)">📡 Universo</button>
+  <button class="tab" onclick="showTab('portfolio', this)">💼 Mi cartera</button>
+  <button class="tab" onclick="showTab('rules', this)">📘 Reglas</button>
+</div>
+```
+
+---
+
+# BLOQUE 3 — Reemplaza la sección HTML de “Señales”
+Busca todo este bloque:
+
+```html
+<section id="signals" class="section">
+  <div class="card">
+    <h2>🎯 Señales recientes</h2>
+    <div class="controls">
+      ...
+    </div>
+    <div id="signalsTable"></div>
+  </div>
+</section>
+```
+
+y sustitúyelo entero por este:
+
+```html
+<section id="signals" class="section">
+  <div class="card">
+    <h2>🎯 Señales recientes</h2>
+    <div class="controls">
+      <input id="signalSearch" placeholder="Buscar ticker o nombre..." oninput="renderSignals()">
+
+      <select id="signalType" onchange="renderSignals()">
+        <option value="">Todas las señales</option>
+        <option value="COMPRA">Compras</option>
+        <option value="VENTA">Ventas</option>
+        <option value="MIXTA">Mixtas</option>
+      </select>
+
+      <select id="signalRegime" onchange="renderSignals()">
+        <option value="">Todos los regímenes</option>
+        <option value="ALCISTA">Alcista</option>
+        <option value="LATERAL">Lateral</option>
+        <option value="BAJISTA">Bajista</option>
+      </select>
+    </div>
+    <div id="signalsTable"></div>
+  </div>
+</section>
+```
+
+---
+
+# BLOQUE 4 — Reemplaza la sección HTML de “Universo”
+Busca tu bloque actual de `<section id="universe"...` y reemplaza solo el contenido de `controls` por este:
+
+```html
+<div class="controls">
+  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
+
+  <select id="universeRegime" onchange="renderUniverse()">
+    <option value="">Todos los regímenes</option>
+    <option value="ALCISTA">Alcista</option>
+    <option value="LATERAL">Lateral</option>
+    <option value="BAJISTA">Bajista</option>
+  </select>
+
+  <select id="fundConfidenceFilter" onchange="renderUniverse()">
+    <option value="">Confianza mínima: Todas</option>
+    <option value="A">Confianza A</option>
+    <option value="B">Confianza B+</option>
+    <option value="C">Confianza C+</option>
+    <option value="D">Confianza D+</option>
+  </select>
+
+  <select id="qualityQFilter" onchange="renderUniverse()">
+    <option value="">Todos los Q de calidad</option>
+    <option value="Q1">Q1</option>
+    <option value="Q2">Q2</option>
+    <option value="Q3">Q3</option>
+    <option value="Q4">Q4</option>
+  </select>
+
+  <input id="qualityMinScore" type="number" min="0" max="100" step="1" placeholder="Calidad mínima" oninput="renderUniverse()">
+
+  <select id="priceFilter" onchange="renderUniverse()">
+    <option value="">Todo tipo de precio</option>
+    <option value="Muy barata">Muy barata</option>
+    <option value="Barata">Barata</option>
+    <option value="Atractiva">Atractiva</option>
+    <option value="En precio">En precio</option>
+    <option value="Exigente">Exigente</option>
+    <option value="Cara">Cara</option>
+  </select>
+
+  <label class="small">
+    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
+    Solo con fundamentales
+  </label>
+</div>
+```
+
+---
+
+# BLOQUE 5 — Reemplaza desde `function clsFor` hasta `function qLabel`
+Ahora viene el error grande.
+
+Busca este trozo actual:
+
+```javascript
+function clsFor(text) {
+  ...
+}
+
+function badge(text, extra="") 
+function priceClass(label) {
+  ...
+}
+
+function priceBadge(label) {
+  ...
+}
+{
+  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
+}
+
+function qLabel(q) {
+  ...
+}
+```
+
+y sustitúyelo entero por este bloque correcto:
+
+```javascript
+function clsFor(text) {
+  text = String(text || "");
+  if (text.includes("COMPRA") || text.includes("ALCISTA") || text.includes("MANTENER")) return "buy";
+  if (text.includes("VENTA 100") || text.includes("BAJISTA") || text.includes("VENDER TODO")) return "sell";
+  if (text.includes("VENTA") || text.includes("LATERAL") || text.includes("REDUCIR") || text.includes("STOP")) return "partial";
+  if (text.includes("MIXTA")) return "mixed";
+  return "neutral";
+}
+
+function badge(text, extra="") {
+  return `<span class="badge ${extra || clsFor(text)}">${text || "—"}</span>`;
+}
+
+function priceClass(label) {
+  label = String(label || "");
+  if (label === "Muy barata" || label === "Barata" || label === "Atractiva") return "buy";
+  if (label === "En precio") return "neutral";
+  if (label === "Exigente") return "partial";
+  if (label === "Cara") return "sell";
+  return "neutral";
+}
+
+function priceBadge(label) {
+  return `<span class="badge ${priceClass(label)}">${label || "—"}</span>`;
+}
+
+function qLabel(q) {
+  if (q === "Q1") return "Q1 ⭐ TOP";
+  if (q === "Q2") return "Q2 ✅";
+  if (q === "Q3") return "Q3 ⚖️";
+  if (q === "Q4") return "Q4 ⚠️";
+  return "—";
+}
+```
+
+---
+
+# BLOQUE 6 — Reemplaza `showTab`
+Busca:
+
+```javascript
+function showTab(id) {
+  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+  event.target.classList.add("active");
+}
+```
+
+y sustitúyelo por:
+
+```javascript
+function showTab(id, el) {
+  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+  if (el) el.classList.add("active");
+}
+```
+
+---
+
+# BLOQUE 7 — Reemplaza `loadData`
+Para que si vuelve a romper algo, no se quede silenciosamente en blanco.
+
+Busca:
+
+```javascript
+async function loadData() {
+  allAssets = await fetch("data/all_assets.json").then(r => r.json());
+  signals = await fetch("data/signals.json").then(r => r.json());
+  summary = await fetch("data/summary.json").then(r => r.json());
+
+  renderSummary();
+  renderGlobal();
+  renderSignals();
+  renderUniverse();
+  renderPortfolio();
+}
+```
+
+y sustitúyelo por:
+
+```javascript
+async function loadData() {
+  try {
+    allAssets = await fetch("data/all_assets.json").then(r => r.json());
+    signals = await fetch("data/signals.json").then(r => r.json());
+    summary = await fetch("data/summary.json").then(r => r.json());
+
+    renderSummary();
+    renderGlobal();
+    renderSignals();
+    renderUniverse();
+    renderPortfolio();
+  } catch (err) {
+    console.error("Error cargando datos:", err);
+    document.getElementById("subtitle").innerText = "Error cargando datos de la miniapp.";
+  }
+}
+```
+
+---
+
+# BLOQUE 8 — Reemplaza `renderUniverse`
+Tu versión actual ya está cerca, pero te dejo una completa y consistente con los nuevos filtros:
+
+```javascript
+function renderUniverse() {
+  const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
+  const regime = document.getElementById("universeRegime")?.value || "";
+  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
+  const qualityQFilter = document.getElementById("qualityQFilter")?.value || "";
+  const priceFilter = document.getElementById("priceFilter")?.value || "";
+
+  const qualityMinRaw = document.getElementById("qualityMinScore")?.value;
+  const qualityMin = qualityMinRaw === "" || qualityMinRaw === undefined ? null : Number(qualityMinRaw);
+
+  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
+
+  let data = allAssets.slice();
+
+  if (q) {
+    data = data.filter(a =>
+      String(a.ticker || "").toUpperCase().includes(q) ||
+      String(a.name || "").toUpperCase().includes(q) ||
+      String(a.sector || "").toUpperCase().includes(q) ||
+      String(a.industry || "").toUpperCase().includes(q)
+    );
+  }
+
+  if (regime) {
+    data = data.filter(a => String(a.regime || "").includes(regime));
+  }
+
+  if (onlyFund) {
+    data = data.filter(a => a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined);
+  }
+
+  if (confFilter) {
+    data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
+  }
+
+  if (qualityQFilter) {
+    data = data.filter(a => String(a.quality_q || "") === qualityQFilter);
+  }
+
+  if (priceFilter) {
+    data = data.filter(a => String(a.attractiveness_label || "") === priceFilter);
+  }
+
+  if (qualityMin !== null && !Number.isNaN(qualityMin)) {
+    data = data.filter(a => Number(a.quality_score) >= qualityMin);
+  }
+
+  data = data.sort((a, b) => {
+    const qa = (a.quality_score === null || a.quality_score === undefined) ? -1 : Number(a.quality_score);
+    const qb = (b.quality_score === null || b.quality_score === undefined) ? -1 : Number(b.quality_score);
+    if (qb !== qa) return qb - qa;
+
+    const pa = (a.attractiveness_score === null || a.attractiveness_score === undefined) ? -1 : Number(a.attractiveness_score);
+    const pb = (b.attractiveness_score === null || b.attractiveness_score === undefined) ? -1 : Number(b.attractiveness_score);
+    if (pb !== pa) return pb - pa;
+
+    return String(a.ticker || "").localeCompare(String(b.ticker || ""));
+  });
+
+  const rows = data.map(a => `
+    <tr>
+      <td>
+        <div class="ticker">${a.ticker || "—"}</div>
+        <div class="name">${a.name || "—"}</div>
+      </td>
+      <td>${badge(a.main_signal || "—")}</td>
+      <td>${badge(a.regime || "—")}</td>
+      <td>${fmtNum(a.close,2)}</td>
+      <td>${fundSummary(a)}</td>
+      <td>${priceBadge(a.attractiveness_label || "—")}</td>
+      <td>
+        ${a.pvi_status || "—"}
+        <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+      </td>
+      <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
+      <td>${a.bucket || "—"}</td>
+    </tr>
+  `).join("");
+
+  document.getElementById("universeTable").innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Activo</th>
+          <th>Señal</th>
+          <th>Régimen</th>
+          <th>Precio</th>
+          <th>Calidad</th>
+          <th>Atractivo precio</th>
+          <th>PVI</th>
+          <th>Dist. McG</th>
+          <th>Universo</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+```
+
+---
+
+# BLOQUE 9 — Reemplaza `fundSummary`
+```javascript
+function fundSummary(a) {
+  if (!(a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined)) {
+    return "—";
+  }
+
+  const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
+    ? a.attractiveness_score
+    : null;
+
+  const attrLabel = a.attractiveness_label || "—";
+
+  return `
+    <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
+    <div class="small">
+      ${a.quality_label || "—"} · ${a.quality_q || "—"} · Conf ${a.confidence_grade || "—"}
+    </div>
+    <div class="small">
+      Precio ${fmtNum(attrScore,1)}/100 · ${attrLabel}
+    </div>
+    <div class="small">
+      ${a.period_label || "N/A"}
+    </div>
+    ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
+  `;
+}
+```
+
+---
+
+# BLOQUE 10 — Reemplaza `signalRow`
+```javascript
 function signalRow(a) {
   const hasFund = a.has_fundamentals === true && a.quality_score !== null && a.quality_score !== undefined;
 
   const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
     ? a.attractiveness_score
-    : a.price_score;
+    : null;
 
-  const attrLabel = a.attractiveness_label || a.price_label || "—";
+  const attrLabel = a.attractiveness_label || "—";
 
   const fund = hasFund
     ? `
@@ -2424,11 +2975,11 @@ function signalRow(a) {
   return `
     <tr>
       <td>
-        <div class="ticker">${a.ticker}</div>
+        <div class="ticker">${a.ticker || "—"}</div>
         <div class="name">${a.name || "—"}</div>
       </td>
-      <td>${badge(a.main_signal)}<div class="small">${a.events_text || ""}</div></td>
-      <td>${badge(a.regime)}<div class="small">Cruces: ${a.recent_crosses ?? "—"}</div></td>
+      <td>${badge(a.main_signal || "—")}<div class="small">${a.events_text || ""}</div></td>
+      <td>${badge(a.regime || "—")}<div class="small">Cruces: ${a.recent_crosses ?? "—"}</div></td>
       <td>
         ${fmtNum(a.close,2)}
         <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
@@ -2447,6 +2998,54 @@ function signalRow(a) {
     </tr>
   `;
 }
+```
+
+---
+
+# El resumen del bug
+## La web está en blanco principalmente por esto:
+```javascript
+function badge(text, extra="") 
+function priceClass(...)
+```
+
+Eso solo ya basta para romperlo todo.
+
+## Y además tienes que arreglar:
+- `score_financial`
+- bloque de filtros de `signals`
+- IDs duplicados
+- `showTab`
+
+---
+
+# Cómo comprobar si ya está bien
+## 1. Ejecuta local:
+```bash
+python -m py_compile generate_site.py
+```
+
+## 2. Genera:
+```bash
+python generate_site.py
+```
+
+## 3. Abre el `site/index.html` en el navegador y pulsa `F12`
+Si hay error JS, saldrá en consola.
+
+---
+
+# Mi recomendación práctica
+Si quieres ir a tiro fijo:
+1. **corrige primero el JS del `badge()`**
+2. luego `score_financial`
+3. luego bloques HTML de señales/universo
+4. luego `showTab`
+
+Con eso ya debería dejar de salir en blanco.
+
+Si quieres, en el siguiente mensaje te hago algo aún más útil:  
+te devuelvo **solo el bloque `INDEX_HTML` completo ya saneado**, para que lo sustituyas entero y no tengas que perseguir errores de comillas, ids o funciones mezcladas.
 function renderSignals() {
   const q = (document.getElementById("signalSearch")?.value || "").toUpperCase();
   const type = document.getElementById("signalType")?.value || "";
@@ -2501,9 +3100,9 @@ function fundSummary(a) {
 
   const attrScore = (a.attractiveness_score !== null && a.attractiveness_score !== undefined)
     ? a.attractiveness_score
-    : a.price_score;
+    : null;
 
-  const attrLabel = a.attractiveness_label || a.price_label || "—";
+  const attrLabel = a.attractiveness_label || "—";
 
   return `
     <b>Calidad ${fmtNum(a.quality_score,1)}/100</b>
@@ -2536,10 +3135,10 @@ function renderUniverse() {
 
   if (q) {
     data = data.filter(a =>
-      String(a.ticker).toUpperCase().includes(q) ||
-      String(a.name).toUpperCase().includes(q) ||
-      String(a.sector).toUpperCase().includes(q) ||
-      String(a.industry).toUpperCase().includes(q)
+      String(a.ticker || "").toUpperCase().includes(q) ||
+      String(a.name || "").toUpperCase().includes(q) ||
+      String(a.sector || "").toUpperCase().includes(q) ||
+      String(a.industry || "").toUpperCase().includes(q)
     );
   }
 
@@ -2560,10 +3159,7 @@ function renderUniverse() {
   }
 
   if (priceFilter) {
-    data = data.filter(a => {
-      const lbl = a.attractiveness_label || a.price_label || "";
-      return String(lbl) === priceFilter;
-    });
+    data = data.filter(a => String(a.attractiveness_label || "") === priceFilter);
   }
 
   if (qualityMin !== null && !Number.isNaN(qualityMin)) {
@@ -2573,40 +3169,34 @@ function renderUniverse() {
   data = data.sort((a, b) => {
     const qa = (a.quality_score === null || a.quality_score === undefined) ? -1 : Number(a.quality_score);
     const qb = (b.quality_score === null || b.quality_score === undefined) ? -1 : Number(b.quality_score);
-
     if (qb !== qa) return qb - qa;
 
     const pa = (a.attractiveness_score === null || a.attractiveness_score === undefined) ? -1 : Number(a.attractiveness_score);
     const pb = (b.attractiveness_score === null || b.attractiveness_score === undefined) ? -1 : Number(b.attractiveness_score);
-
     if (pb !== pa) return pb - pa;
 
-    return String(a.ticker).localeCompare(String(b.ticker));
+    return String(a.ticker || "").localeCompare(String(b.ticker || ""));
   });
 
-  const rows = data.map(a => {
-    const attrLabel = a.attractiveness_label || a.price_label || "—";
-
-    return `
-      <tr>
-        <td>
-          <div class="ticker">${a.ticker}</div>
-          <div class="name">${a.name || "—"}</div>
-        </td>
-        <td>${badge(a.main_signal || "—")}</td>
-        <td>${badge(a.regime || "—")}</td>
-        <td>${fmtNum(a.close,2)}</td>
-        <td>${fundSummary(a)}</td>
-        <td>${priceBadge(attrLabel)}</td>
-        <td>
-          ${a.pvi_status || "—"}
-          <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-        </td>
-        <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-        <td>${a.bucket || "—"}</td>
-      </tr>
-    `;
-  }).join("");
+  const rows = data.map(a => `
+    <tr>
+      <td>
+        <div class="ticker">${a.ticker || "—"}</div>
+        <div class="name">${a.name || "—"}</div>
+      </td>
+      <td>${badge(a.main_signal || "—")}</td>
+      <td>${badge(a.regime || "—")}</td>
+      <td>${fmtNum(a.close,2)}</td>
+      <td>${fundSummary(a)}</td>
+      <td>${priceBadge(a.attractiveness_label || "—")}</td>
+      <td>
+        ${a.pvi_status || "—"}
+        <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
+      </td>
+      <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
+      <td>${a.bucket || "—"}</td>
+    </tr>
+  `).join("");
 
   document.getElementById("universeTable").innerHTML = `
     <table>
