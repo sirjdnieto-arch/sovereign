@@ -318,10 +318,10 @@ def analyze_technical(row):
         if CONFIG.get("DROP_TODAY_CANDLE", True):
             today_utc = datetime.now(timezone.utc).date()
 
-        if len(df) > 1 and pd.to_datetime(df.index[-1]).date() == today_utc:
-            df = df.iloc[:-1]
-except Exception:
-    pass
+            if len(df) > 1 and pd.to_datetime(df.index[-1]).date() == today_utc:
+                df = df.iloc[:-1]
+    except Exception:
+        pass
 
     if df.empty or len(df) < CONFIG["PVI_MA"] + 10:
         return {
@@ -358,8 +358,6 @@ except Exception:
     pvi_sell_ago = bars_ago_for_signal(df["PVI_Cross_Down"], CONFIG["LOOKBACK_SIGNAL"])
     mcg_sell_ago = bars_ago_for_signal(df["McG_Cross_Down"], CONFIG["LOOKBACK_SIGNAL"])
 
- 
-
     above = df["Close"] > df["McG_Regime"]
     recent_crosses = int(
         above.tail(CONFIG["LATERAL_LOOKBACK"])
@@ -380,44 +378,44 @@ except Exception:
 
     pvi_prev = safe_float(df["PVI"].iloc[-2])
     pvi_sig_prev = safe_float(df["PVI_Signal"].iloc[-2])
-    
+
     raw_has_buy = buy_ago is not None
     raw_has_pvi_sell = pvi_sell_ago is not None
     raw_has_mcg_sell = mcg_sell_ago is not None
 
-# La señal solo es válida si el estado actual la confirma.
-if CONFIG.get("REQUIRE_CURRENT_SIGNAL_STATE", True):
-    has_buy = (
-        raw_has_buy
-        and valid_number(pvi_now, pvi_sig_now)
+    # La señal solo es válida si el estado actual la confirma.
+    if CONFIG.get("REQUIRE_CURRENT_SIGNAL_STATE", True):
+        has_buy = (
+            raw_has_buy
+            and valid_number(pvi_now, pvi_sig_now)
+            and pvi_now > pvi_sig_now
+        )
+
+        has_pvi_sell = (
+            raw_has_pvi_sell
+            and valid_number(pvi_now, pvi_sig_now)
+            and pvi_now < pvi_sig_now
+        )
+
+        has_mcg_sell = (
+            raw_has_mcg_sell
+            and valid_number(close_now, mcg_exit_now)
+            and close_now < mcg_exit_now
+        )
+    else:
+        has_buy = raw_has_buy
+        has_pvi_sell = raw_has_pvi_sell
+        has_mcg_sell = raw_has_mcg_sell
+
+    pvi_cross_current = (
+        valid_number(pvi_now, pvi_sig_now, pvi_prev, pvi_sig_prev)
         and pvi_now > pvi_sig_now
+        and pvi_prev <= pvi_sig_prev
     )
-
-    has_pvi_sell = (
-        raw_has_pvi_sell
-        and valid_number(pvi_now, pvi_sig_now)
-        and pvi_now < pvi_sig_now
-    )
-
-    has_mcg_sell = (
-        raw_has_mcg_sell
-        and valid_number(close_now, mcg_exit_now)
-        and close_now < mcg_exit_now
-    )
-else:
-    has_buy = raw_has_buy
-    has_pvi_sell = raw_has_pvi_sell
-    has_mcg_sell = raw_has_mcg_sell
-
-pvi_cross_current = (
-    valid_number(pvi_now, pvi_sig_now, pvi_prev, pvi_sig_prev)
-    and pvi_now > pvi_sig_now
-    and pvi_prev <= pvi_sig_prev
-)
 
     if recent_crosses > 2:
         regime = "🟡 LATERAL"
-    elif close_now > mcg_regime_now:
+    elif valid_number(close_now, mcg_regime_now) and close_now > mcg_regime_now:
         regime = "🟢 ALCISTA"
     else:
         regime = "🔴 BAJISTA"
@@ -453,6 +451,11 @@ pvi_cross_current = (
     if valid_number(close_now, mcg_exit_now) and mcg_exit_now != 0:
         dist_to_mcg_exit = close_now / mcg_exit_now - 1
 
+    if valid_number(pvi_now, pvi_sig_now):
+        pvi_status = "POSITIVO" if pvi_now > pvi_sig_now else "NEGATIVO"
+    else:
+        pvi_status = "N/A"
+
     return {
         "ticker": ticker,
         "name": name,
@@ -475,7 +478,7 @@ pvi_cross_current = (
         "dist_to_mcg_exit": dist_to_mcg_exit,
         "pvi": pvi_now,
         "pvi_signal": pvi_sig_now,
-        "pvi_status": "POSITIVO" if pvi_now > pvi_sig_now else "NEGATIVO",
+        "pvi_status": pvi_status,
         "pvi_prev": pvi_prev,
         "pvi_signal_prev": pvi_sig_prev,
         "pvi_cross_current": bool(pvi_cross_current),
@@ -484,7 +487,6 @@ pvi_cross_current = (
         "last_date": str(df.index[-1].date()),
         "error": ""
     }
-
 
 # ============================================================
 # FUNDAMENTALES v2 — LCrack Sovereign
