@@ -83,16 +83,11 @@ BAD_TICKERS = {
 }
 
 TECHNICAL_ONLY_BUCKETS = {
-    "Euro Stoxx 50",
-    "DAX 40",
-    "IBEX 35",
     "Commodities",
     "Crypto",
 }
 
-TECHNICAL_ONLY_SUFFIXES = (
-    ".PA", ".DE", ".MC", ".SW", ".TO"
-)
+TECHNICAL_ONLY_SUFFIXES = ()
 
 
 # ============================================================
@@ -426,8 +421,86 @@ def analyze_technical(row):
 
 
 # ============================================================
-# FUNDAMENTALES
+# FUNDAMENTALES v2 — LCrack Sovereign
 # ============================================================
+
+def safe_div(n, d):
+    try:
+        n = safe_float(n)
+        d = safe_float(d)
+        if not np.isfinite(n) or not np.isfinite(d) or d == 0:
+            return np.nan
+        return n / d
+    except Exception:
+        return np.nan
+
+
+def scale_score(x, bad, good):
+    """
+    Escala lineal 0-100.
+    Funciona tanto si good > bad como si good < bad.
+    Ejemplo:
+      scale_score(0.20, 0.05, 0.20) => 100
+      scale_score(10, 40, 12)       => alto, porque P/E bajo es mejor
+    """
+    x = safe_float(x)
+    if not np.isfinite(x):
+        return None
+
+    if good == bad:
+        return None
+
+    s = (x - bad) / (good - bad) * 100
+    return float(np.clip(s, 0, 100))
+
+
+def avg_available(values, weights=None):
+    clean = []
+    clean_w = []
+
+    if weights is None:
+        weights = [1] * len(values)
+
+    for v, w in zip(values, weights):
+        if v is None:
+            continue
+        v = safe_float(v)
+        if np.isfinite(v):
+            clean.append(v)
+            clean_w.append(w)
+
+    if not clean:
+        return None
+
+    return float(np.average(clean, weights=clean_w))
+
+
+def rating_from_score(score):
+    if score is None or pd.isna(score):
+        return "N/A"
+    score = float(score)
+    if score >= 90:
+        return "A+"
+    if score >= 80:
+        return "A"
+    if score >= 70:
+        return "B+"
+    if score >= 60:
+        return "B"
+    if score >= 45:
+        return "C"
+    return "D"
+
+
+def confidence_grade(score):
+    if score >= 85:
+        return "A"
+    if score >= 70:
+        return "B"
+    if score >= 50:
+        return "C"
+    return "D"
+
 
 def get_statement(ticker_obj, names):
     for name in names:
@@ -440,100 +513,240 @@ def get_statement(ticker_obj, names):
     return pd.DataFrame()
 
 
-def get_row(df, aliases, col=0):
-    if df is None or df.empty or len(df.columns) <= col:
-        return np.nan
+def get_series(df, aliases):
+    if df is None or df.empty:
+        return None
 
     for alias in aliases:
         if alias in df.index:
             try:
                 obj = df.loc[alias]
                 if isinstance(obj, pd.DataFrame):
-                    return safe_float(obj.iloc[0, col])
-                return safe_float(obj.iloc[col])
+                    obj = obj.iloc[0]
+                return pd.to_numeric(obj, errors="coerce")
             except Exception:
-                continue
+                pass
+
+    # fallback flexible: búsqueda parcial
+    aliases_low = [a.lower() for a in aliases]
+    for idx in df.index:
+        idx_low = str(idx).lower()
+        if any(a in idx_low for a in aliases_low):
+            try:
+                obj = df.loc[idx]
+                if isinstance(obj, pd.DataFrame):
+                    obj = obj.iloc[0]
+                return pd.to_numeric(obj, errors="coerce")
+            except Exception:
+                pass
+
+    return None
+
+
+def get_val(df, aliases, pos=0, lookahead=4):
+    s = get_series(df, aliases)
+    if s is None or len(s) == 0:
+        return np.nan
+
+    try:
+        if pos < len(s) and pd.notna(s.iloc[pos]):
+            return safe_float(s.iloc[pos])
+    except Exception:
+        pass
+
+    try:
+        window = s.iloc[pos:pos + lookahead].dropna()
+        if len(window) > 0:
+            return safe_float(window.iloc[0])
+    except Exception:
+        pass
 
     return np.nan
 
 
-def get_ttm(df, aliases, fallback_annual_df=None, min_quarters=4):
-    if df is not None and not df.empty:
-        for alias in aliases:
-            if alias in df.index:
-                try:
-                    obj = df.loc[alias]
-                    vals = obj.iloc[:4] if not isinstance(obj, pd.DataFrame) else obj.iloc[0, :4]
-                    vals = pd.to_numeric(vals, errors="coerce").dropna()
-                    if len(vals) >= min_quarters:
-                        return safe_float(vals.sum())
-                except Exception:
-                    pass
+def get_ttm(q_df, a_df, aliases, multiplier=4):
+    """
+    Prioridad:
+    1. Suma de últimos 4 datos válidos trimestrales.
+    2. Último dato válido x reporting multiplier.
+    3. Último dato anual.
+    """
+    s = get_series(q_df, aliases)
 
-    if fallback_annual_df is not None and not fallback_annual_df.empty:
-        return get_row(fallback_annual_df, aliases, col=0)
+    if s is not None:
+        vals = s.dropna()
 
-    return np.nan
+        if len(vals) >= 4:
+            return safe_float(vals.iloc[:4].sum())
+
+        if len(vals) >= 1 and multiplier:
+            return safe_float(vals.iloc[0] * multiplier)
+
+    return get_val(a_df, aliases, 0)
 
 
-def piotroski_annual(is_a, bs_a, cf_a):
-    if is_a.empty or bs_a.empty or cf_a.empty or len(is_a.columns) < 2 or len(bs_a.columns) < 2:
+def statement_latest_date(*dfs):
+    dates = []
+
+    for df in dfs:
+        if df is None or df.empty:
+            continue
+
+        for c in df.columns:
+            try:
+                dates.append(pd.to_datetime(c).to_pydatetime().replace(tzinfo=None))
+            except Exception:
+                pass
+
+    if not dates:
+        return None
+
+    return max(dates)
+
+
+def period_label_from_date(dt, annual=False):
+    if dt is None:
+        return "N/A"
+
+    if annual:
+        return f"FY{str(dt.year)[-2:]}"
+
+    q = ((dt.month - 1) // 3) + 1
+    return f"{q}Q{str(dt.year)[-2:]}"
+
+
+def reporting_context(q_df, a_df):
+    """
+    Detecta si el reporting aparente es trimestral, semestral o anual.
+    """
+    latest = statement_latest_date(q_df)
+
+    if q_df is not None and not q_df.empty and len(q_df.columns) >= 2:
+        try:
+            d1 = pd.to_datetime(q_df.columns[0])
+            d2 = pd.to_datetime(q_df.columns[1])
+            diff = abs((d1 - d2).days)
+
+            if diff > 300:
+                return 1, "Annual-like", period_label_from_date(d1, annual=True), d1
+            if diff > 150:
+                return 2, "Semiannual", period_label_from_date(d1), d1
+
+            return 4, "Quarterly", period_label_from_date(d1), d1
+
+        except Exception:
+            pass
+
+    if latest is not None:
+        return 4, "Quarterly/partial", period_label_from_date(latest), latest
+
+    annual_latest = statement_latest_date(a_df)
+
+    if annual_latest is not None:
+        return 1, "Annual", period_label_from_date(annual_latest, annual=True), annual_latest
+
+    return 4, "Unknown", "N/A", None
+
+
+def route_fundamental_model(ticker, info):
+    sector = str(info.get("sector") or "")
+    industry = str(info.get("industry") or "")
+
+    bank_tickers = {
+        "JPM", "BAC", "SAN.MC", "BBVA.MC", "BNP.PA", "SAN.PA"
+    }
+
+    insurance_tickers = {
+        "ALV.DE", "MUV2.DE", "MAP.MC"
+    }
+
+    if ticker.endswith("-USD") or ticker.endswith("=F"):
+        return "Technical-only"
+
+    if ticker in insurance_tickers or "insurance" in industry.lower():
+        return "Insurance"
+
+    if ticker in bank_tickers or "bank" in industry.lower() or "banks" in industry.lower():
+        return "Bank"
+
+    if "financial services" in sector.lower():
+        # V, MA, exchanges, asset managers, fintech financiera, etc.
+        return "Financial"
+
+    return "Corporate"
+
+
+def calculate_piotroski_v2(f_df, b_df, cf_df, prev_pos=1, multiplier=1):
+    """
+    Piotroski F-Score robusto.
+    Usa anual si está disponible; si no, quarterly con prev_pos.
+    """
+    if f_df is None or f_df.empty or b_df is None or b_df.empty:
         return np.nan
 
     points = 0
     possible = 0
 
-    def add(condition):
+    def add(cond):
         nonlocal points, possible
-        if condition is None:
+        if cond is None:
             return
         possible += 1
-        if bool(condition):
+        if bool(cond):
             points += 1
 
-    ni0 = get_row(is_a, ["Net Income", "Net Income Common Stockholders"], 0)
-    ni1 = get_row(is_a, ["Net Income", "Net Income Common Stockholders"], 1)
-    cfo0 = get_row(cf_a, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
+    ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
+    ni1 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], prev_pos)
 
-    ta0 = get_row(bs_a, ["Total Assets"], 0)
-    ta1 = get_row(bs_a, ["Total Assets"], 1)
+    cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
 
-    ltd0 = get_row(bs_a, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], 0)
-    ltd1 = get_row(bs_a, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], 1)
+    ta0 = get_val(b_df, ["Total Assets"], 0)
+    ta1 = get_val(b_df, ["Total Assets"], prev_pos)
 
-    ca0 = get_row(bs_a, ["Current Assets", "Total Current Assets"], 0)
-    ca1 = get_row(bs_a, ["Current Assets", "Total Current Assets"], 1)
+    ltd0 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], 0)
+    ltd1 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], prev_pos)
 
-    cl0 = get_row(bs_a, ["Current Liabilities", "Total Current Liabilities"], 0)
-    cl1 = get_row(bs_a, ["Current Liabilities", "Total Current Liabilities"], 1)
+    ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
+    ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
 
-    gp0 = get_row(is_a, ["Gross Profit"], 0)
-    gp1 = get_row(is_a, ["Gross Profit"], 1)
+    cl0 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], 0)
+    cl1 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], prev_pos)
 
-    rev0 = get_row(is_a, ["Total Revenue", "Operating Revenue"], 0)
-    rev1 = get_row(is_a, ["Total Revenue", "Operating Revenue"], 1)
+    gp0 = get_val(f_df, ["Gross Profit"], 0)
+    gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
 
-    shares0 = get_row(bs_a, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
-    shares1 = get_row(bs_a, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 1)
+    rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
+    rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
+
+    shares0 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
+    shares1 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], prev_pos)
 
     if valid_number(ni0):
         add(ni0 > 0)
+
     if valid_number(cfo0):
         add(cfo0 > 0)
+
     if valid_number(ni0, ni1, ta0, ta1) and ta0 != 0 and ta1 != 0:
-        add((ni0 / ta0) > (ni1 / ta1))
+        add((ni0 * multiplier / ta0) > (ni1 * multiplier / ta1))
+
     if valid_number(cfo0, ni0):
         add(cfo0 > ni0)
+
     if valid_number(ltd0, ltd1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((ltd0 / ta0) < (ltd1 / ta1))
+
     if valid_number(ca0, ca1, cl0, cl1) and cl0 != 0 and cl1 != 0:
         add((ca0 / cl0) > (ca1 / cl1))
+
     if valid_number(shares0, shares1):
         add(shares0 <= shares1)
+
     if valid_number(gp0, gp1, rev0, rev1) and rev0 != 0 and rev1 != 0:
         add((gp0 / rev0) > (gp1 / rev1))
+
     if valid_number(rev0, rev1, ta0, ta1) and ta0 != 0 and ta1 != 0:
-        add((rev0 / ta0) > (rev1 / ta1))
+        add((rev0 * multiplier / ta0) > (rev1 * multiplier / ta1))
 
     if possible == 0:
         return np.nan
@@ -541,71 +754,453 @@ def piotroski_annual(is_a, bs_a, cf_a):
     return 9 * points / possible
 
 
-def score_var(val, threshold_high, threshold_low, reverse=False):
-    if pd.isna(val):
-        return 0
+def calculate_altman_z_v2(b_df, f_df, info, market_cap, multiplier):
+    try:
+        ta = get_val(b_df, ["Total Assets"], 0)
+        if not valid_number(ta) or ta <= 0:
+            return np.nan
 
-    if not reverse:
-        if val > threshold_high:
-            return 0.5
-        if val < threshold_low:
-            return -0.5
-        return 0
+        ca = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
+        cl = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], 0)
+        re = get_val(b_df, ["Retained Earnings"], 0)
+        ebit = get_val(f_df, ["Operating Income", "EBIT"], 0)
+        revenue = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
+        total_liab = get_val(
+            b_df,
+            ["Total Liabilities Net Minority Interest", "Total Liab", "Total Liabilities"],
+            0
+        )
 
-    if val < threshold_high:
-        return 0.5
-    if val > threshold_low:
-        return -0.5
-    return 0
+        if not valid_number(ca):
+            ca = 0
+        if not valid_number(cl):
+            cl = 0
+        if not valid_number(re):
+            re = 0
+
+        ebit = ebit * multiplier if valid_number(ebit) else np.nan
+        revenue = revenue * multiplier if valid_number(revenue) else np.nan
+
+        if not valid_number(total_liab) or total_liab == 0:
+            return np.nan
+
+        wc = ca - cl
+
+        return (
+            1.2 * safe_div(wc, ta)
+            + 1.4 * safe_div(re, ta)
+            + 3.3 * safe_div(ebit, ta)
+            + 0.6 * safe_div(market_cap, total_liab)
+            + 1.0 * safe_div(revenue, ta)
+        )
+
+    except Exception:
+        return np.nan
+
+
+def calculate_beneish_m_score(f_df, b_df, cf_df, prev_pos=1):
+    """
+    Beneish M-Score aproximado.
+    Si faltan demasiados datos, devuelve NaN.
+    Bandera roja habitual: M > -1.78.
+    """
+    try:
+        rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
+        rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
+
+        rec0 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], 0)
+        rec1 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], prev_pos)
+
+        gp0 = get_val(f_df, ["Gross Profit"], 0)
+        gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
+
+        ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
+        ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
+
+        ppe0 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], 0)
+        ppe1 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], prev_pos)
+
+        ta0 = get_val(b_df, ["Total Assets"], 0)
+        ta1 = get_val(b_df, ["Total Assets"], prev_pos)
+
+        dep0 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], 0))
+        dep1 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], prev_pos))
+
+        sga0 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], 0)
+        sga1 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], prev_pos)
+
+        debt0 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
+        debt1 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], prev_pos)
+
+        ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
+        cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
+
+        comps = []
+
+        dsri = safe_div(safe_div(rec0, rev0), safe_div(rec1, rev1))
+        if valid_number(dsri):
+            comps.append("dsri")
+
+        gm0 = safe_div(gp0, rev0)
+        gm1 = safe_div(gp1, rev1)
+        gmi = safe_div(gm1, gm0)
+        if valid_number(gmi):
+            comps.append("gmi")
+
+        aqi = safe_div(
+            1 - safe_div(ca0 + ppe0, ta0),
+            1 - safe_div(ca1 + ppe1, ta1)
+        )
+        if valid_number(aqi):
+            comps.append("aqi")
+
+        sgi = safe_div(rev0, rev1)
+        if valid_number(sgi):
+            comps.append("sgi")
+
+        depi = safe_div(
+            safe_div(dep1, dep1 + ppe1),
+            safe_div(dep0, dep0 + ppe0)
+        )
+        if valid_number(depi):
+            comps.append("depi")
+
+        sgai = safe_div(safe_div(sga0, rev0), safe_div(sga1, rev1))
+        if valid_number(sgai):
+            comps.append("sgai")
+
+        lvgi = safe_div(safe_div(debt0, ta0), safe_div(debt1, ta1))
+        if valid_number(lvgi):
+            comps.append("lvgi")
+
+        tata = safe_div(ni0 - cfo0, ta0)
+        if valid_number(tata):
+            comps.append("tata")
+
+        if len(comps) < 5:
+            return np.nan
+
+        # Sustituciones neutras si falta algún componente
+        dsri = dsri if valid_number(dsri) else 1
+        gmi = gmi if valid_number(gmi) else 1
+        aqi = aqi if valid_number(aqi) else 1
+        sgi = sgi if valid_number(sgi) else 1
+        depi = depi if valid_number(depi) else 1
+        sgai = sgai if valid_number(sgai) else 1
+        lvgi = lvgi if valid_number(lvgi) else 1
+        tata = tata if valid_number(tata) else 0
+
+        m = (
+            -4.84
+            + 0.920 * dsri
+            + 0.528 * gmi
+            + 0.404 * aqi
+            + 0.892 * sgi
+            + 0.115 * depi
+            - 0.172 * sgai
+            + 4.679 * tata
+            - 0.327 * lvgi
+        )
+
+        return safe_float(m)
+
+    except Exception:
+        return np.nan
+
+
+def growth_rate(df, aliases, prev_pos=4):
+    v0 = get_val(df, aliases, 0)
+    v1 = get_val(df, aliases, prev_pos)
+
+    if not valid_number(v0, v1) or v1 == 0:
+        return np.nan
+
+    return v0 / abs(v1) - 1
+
+
+def consistency_score(f_df):
+    s = get_series(f_df, ["Net Income", "Net Income Common Stockholders"])
+    if s is None:
+        return None
+
+    vals = s.dropna().iloc[:4]
+
+    if len(vals) == 0:
+        return None
+
+    return float((vals > 0).sum() / len(vals) * 100)
+
+
+def compute_confidence(model, latest_date, q_df, a_df, metrics):
+    expected_by_model = {
+        "Corporate": [
+            "revenue_ttm", "op_income_ttm", "net_income_ttm", "cfo_ttm",
+            "total_assets", "equity", "total_debt", "roic", "op_margin",
+            "cash_quality", "piotroski"
+        ],
+        "Bank": [
+            "revenue_ttm", "net_income_ttm", "total_assets", "equity",
+            "roe", "roa", "equity_assets", "pb"
+        ],
+        "Insurance": [
+            "revenue_ttm", "net_income_ttm", "total_assets", "equity",
+            "roe", "equity_assets", "pb"
+        ],
+        "Financial": [
+            "revenue_ttm", "net_income_ttm", "total_assets", "equity",
+            "roe", "op_margin", "pb", "piotroski"
+        ],
+    }
+
+    expected = expected_by_model.get(model, expected_by_model["Corporate"])
+    available = 0
+
+    for k in expected:
+        if k in metrics and valid_number(metrics[k]):
+            available += 1
+
+    coverage = available / len(expected) if expected else 0
+
+    freshness_points = 0
+    if latest_date is not None:
+        age = (datetime.now().replace(tzinfo=None) - pd.to_datetime(latest_date).replace(tzinfo=None)).days
+        if age <= 150:
+            freshness_points = 15
+        elif age <= 270:
+            freshness_points = 10
+        elif age <= 420:
+            freshness_points = 5
+
+    history_points = 0
+    try:
+        q_cols = len(q_df.columns) if q_df is not None and not q_df.empty else 0
+        a_cols = len(a_df.columns) if a_df is not None and not a_df.empty else 0
+
+        if q_cols >= 4 or a_cols >= 2:
+            history_points = 15
+        elif q_cols >= 2 or a_cols >= 1:
+            history_points = 8
+    except Exception:
+        pass
+
+    confidence = coverage * 70 + freshness_points + history_points
+    confidence = float(np.clip(confidence, 0, 100))
+
+    return confidence, confidence_grade(confidence), available, len(expected)
+
+
+def score_corporate(metrics):
+    quality = avg_available([
+        scale_score(metrics.get("roic"), 0.05, 0.20),
+        scale_score(metrics.get("op_margin"), 0.05, 0.25),
+        scale_score(metrics.get("gross_margin"), 0.20, 0.60),
+        scale_score(metrics.get("piotroski"), 3, 8),
+    ])
+
+    cash = avg_available([
+        scale_score(metrics.get("cash_quality"), 0.60, 1.50),
+        scale_score(metrics.get("fcf_margin"), -0.03, 0.12),
+        100 if valid_number(metrics.get("cfo_ttm")) and metrics.get("cfo_ttm") > 0 else 20,
+        100 if valid_number(metrics.get("fcf_ttm")) and metrics.get("fcf_ttm") > 0 else 20,
+    ])
+
+    solvency = avg_available([
+        scale_score(metrics.get("altman_z"), 1.8, 3.0),
+        scale_score(metrics.get("net_debt_ebitda"), 4.0, 1.0),
+        scale_score(metrics.get("interest_coverage"), 1.5, 8.0),
+        scale_score(metrics.get("current_ratio"), 0.8, 2.0),
+    ])
+
+    growth = avg_available([
+        scale_score(metrics.get("revenue_growth"), -0.10, 0.15),
+        scale_score(metrics.get("op_income_growth"), -0.10, 0.20),
+        metrics.get("consistency_score"),
+    ])
+
+    valuation = avg_available([
+        scale_score(metrics.get("pe"), 40, 12),
+        scale_score(metrics.get("pb"), 8, 1.5),
+        scale_score(metrics.get("ev_ebitda"), 25, 10),
+        scale_score(metrics.get("fcf_yield"), 0.00, 0.06),
+        scale_score(metrics.get("upside"), -0.10, 0.20),
+    ])
+
+    beneish = metrics.get("beneish_m")
+    if valid_number(beneish):
+        if beneish > -1.78:
+            beneish_score = 20
+        elif beneish > -2.22:
+            beneish_score = 60
+        else:
+            beneish_score = 100
+    else:
+        beneish_score = None
+
+    risk = avg_available([
+        beneish_score,
+        scale_score(metrics.get("shares_growth"), 0.05, 0.00),
+        scale_score(metrics.get("net_debt_ebitda"), 4.0, 1.0),
+        scale_score(metrics.get("altman_z"), 1.8, 3.0),
+        100 if valid_number(metrics.get("fcf_ttm")) and metrics.get("fcf_ttm") > 0 else 40,
+    ])
+
+    score = avg_available(
+        [quality, cash, solvency, growth, valuation, risk],
+        weights=[25, 20, 15, 15, 15, 10]
+    )
+
+    return quality, cash, solvency, growth, valuation, risk, score
+
+
+def score_financial(metrics, model):
+    roe = metrics.get("roe")
+    roa = metrics.get("roa")
+    pb = metrics.get("pb")
+
+    roe_pb = np.nan
+    if valid_number(roe, pb) and pb > 0:
+        roe_pb = roe / pb
+
+    quality = avg_available([
+        scale_score(roe, 0.08, 0.18),
+        scale_score(roa, 0.005, 0.015),
+        scale_score(metrics.get("piotroski"), 3, 8),
+        scale_score(metrics.get("op_margin"), 0.15, 0.45),
+    ])
+
+    # En bancos/aseguradoras esto representa capitalización/solidez, no Altman
+    solvency = avg_available([
+        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
+        scale_score(metrics.get("debt_equity"), 3.0, 0.5),
+    ])
+
+    cash = avg_available([
+        scale_score(metrics.get("cash_quality"), 0.50, 1.30),
+        metrics.get("consistency_score"),
+    ])
+
+    growth = avg_available([
+        scale_score(metrics.get("revenue_growth"), -0.08, 0.12),
+        scale_score(metrics.get("net_income_growth"), -0.10, 0.15),
+        metrics.get("consistency_score"),
+    ])
+
+    valuation = avg_available([
+        scale_score(pb, 3.0, 0.8),
+        scale_score(metrics.get("pe"), 25, 8),
+        scale_score(roe_pb, 0.04, 0.12),
+        scale_score(metrics.get("upside"), -0.10, 0.20),
+    ])
+
+    beneish = metrics.get("beneish_m")
+    if valid_number(beneish):
+        if beneish > -1.78:
+            beneish_score = 30
+        elif beneish > -2.22:
+            beneish_score = 65
+        else:
+            beneish_score = 100
+    else:
+        beneish_score = None
+
+    risk = avg_available([
+        beneish_score,
+        scale_score(metrics.get("shares_growth"), 0.05, 0.00),
+        scale_score(metrics.get("equity_assets"), 0.05, 0.12),
+    ])
+
+    score = avg_available(
+        [quality, cash, solvency, growth, valuation, risk],
+        weights=[25, 15, 20, 15, 15, 10]
+    )
+
+    return quality, cash, solvency, growth, valuation, risk, score
 
 
 def get_fundamental_raw(ticker):
     try:
-        t = yf.Ticker(ticker)
+        asset = yf.Ticker(ticker)
 
         try:
-            info = t.info or {}
+            info = asset.info or {}
         except Exception:
             info = {}
 
-        bs_a = get_statement(t, ["balance_sheet", "balancesheet"])
-        is_a = get_statement(t, ["income_stmt", "financials"])
-        cf_a = get_statement(t, ["cashflow"])
+        model = route_fundamental_model(ticker, info)
 
-        bs_q = get_statement(t, ["quarterly_balance_sheet", "quarterly_balancesheet"])
-        is_q = get_statement(t, ["quarterly_income_stmt", "quarterly_financials"])
-        cf_q = get_statement(t, ["quarterly_cashflow"])
-
-        if bs_a.empty and bs_q.empty:
+        if model == "Technical-only":
             return None
 
-        current_price = safe_float(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"))
+        bs_a = get_statement(asset, ["balance_sheet", "balancesheet"])
+        is_a = get_statement(asset, ["income_stmt", "financials"])
+        cf_a = get_statement(asset, ["cashflow"])
+
+        bs_q = get_statement(asset, ["quarterly_balance_sheet", "quarterly_balancesheet"])
+        is_q = get_statement(asset, ["quarterly_income_stmt", "quarterly_financials"])
+        cf_q = get_statement(asset, ["quarterly_cashflow"])
+
+        if (bs_a.empty and bs_q.empty) or (is_a.empty and is_q.empty):
+            return None
+
+        multiplier, reporting_frequency, period_label, latest_date = reporting_context(is_q, is_a)
+
+        # Para Piotroski y Beneish:
+        # anual si hay 2 años; si no, quarterly con same-quarter YoY cuando sea posible
+        if not is_a.empty and len(is_a.columns) >= 2:
+            p_f, p_b, p_cf = is_a, bs_a, cf_a
+            prev_pos = 1
+            p_mult = 1
+        else:
+            p_f, p_b, p_cf = is_q, bs_q, cf_q
+            prev_pos = 4 if len(is_q.columns) >= 5 else 1
+            p_mult = multiplier
+
+        sector = info.get("sector") or "—"
+        industry = info.get("industry") or "—"
+        name = info.get("longName") or info.get("shortName") or ticker
+        currency = info.get("currency") or "—"
+
+        price = safe_float(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"))
+        market_cap = safe_float(info.get("marketCap"))
+
         target = safe_float(info.get("targetMeanPrice"))
-
         upside = np.nan
-        if valid_number(current_price, target) and current_price > 0 and target > 0:
-            upside = target / current_price - 1
+        if valid_number(price, target) and price > 0 and target > 0:
+            upside = target / price - 1
 
-        revenue_ttm = get_ttm(is_q, ["Total Revenue", "Operating Revenue"], is_a)
-        op_income_ttm = get_ttm(is_q, ["Operating Income"], is_a)
-        net_income_ttm = get_ttm(is_q, ["Net Income", "Net Income Common Stockholders"], is_a)
-        tax_ttm = get_ttm(is_q, ["Tax Provision"], is_a)
-        pretax_ttm = get_ttm(is_q, ["Pretax Income", "Income Before Tax"], is_a)
-        interest_expense_ttm = get_ttm(is_q, ["Interest Expense", "Interest Expense Non Operating"], is_a)
-        cfo_ttm = get_ttm(cf_q, ["Operating Cash Flow", "Total Cash From Operating Activities"], cf_a)
+        revenue_ttm = get_ttm(is_q, is_a, ["Total Revenue", "Operating Revenue"], multiplier)
+        gross_profit_ttm = get_ttm(is_q, is_a, ["Gross Profit"], multiplier)
+        op_income_ttm = get_ttm(is_q, is_a, ["Operating Income", "EBIT"], multiplier)
+        net_income_ttm = get_ttm(is_q, is_a, ["Net Income", "Net Income Common Stockholders"], multiplier)
+        cfo_ttm = get_ttm(cf_q, cf_a, ["Operating Cash Flow", "Total Cash From Operating Activities"], multiplier)
+        capex_ttm = get_ttm(cf_q, cf_a, ["Capital Expenditure", "Capital Expenditures"], multiplier)
 
-        ebitda_ttm = get_ttm(is_q, ["EBITDA", "Normalized EBITDA"], is_a)
+        fcf_ttm = np.nan
+        if valid_number(cfo_ttm, capex_ttm):
+            # capex suele venir negativo en cashflow
+            fcf_ttm = cfo_ttm + capex_ttm
+
+        tax_ttm = get_ttm(is_q, is_a, ["Tax Provision"], multiplier)
+        pretax_ttm = get_ttm(is_q, is_a, ["Pretax Income", "Income Before Tax"], multiplier)
+        interest_expense_ttm = get_ttm(is_q, is_a, ["Interest Expense", "Interest Expense Non Operating"], multiplier)
+
+        ebitda_ttm = get_ttm(is_q, is_a, ["EBITDA", "Normalized EBITDA"], multiplier)
         if pd.isna(ebitda_ttm):
             ebitda_ttm = safe_float(info.get("ebitda"))
 
         bs_ref = bs_q if not bs_q.empty else bs_a
 
-        total_assets = get_row(bs_ref, ["Total Assets"], 0)
-        current_assets = get_row(bs_ref, ["Current Assets", "Total Current Assets"], 0)
-        current_liabilities = get_row(bs_ref, ["Current Liabilities", "Total Current Liabilities"], 0)
-        total_liabilities = get_row(bs_ref, ["Total Liabilities Net Minority Interest", "Total Liab", "Total Liabilities"], 0)
+        total_assets = get_val(bs_ref, ["Total Assets"], 0)
+        current_assets = get_val(bs_ref, ["Current Assets", "Total Current Assets"], 0)
+        current_liabilities = get_val(bs_ref, ["Current Liabilities", "Total Current Liabilities"], 0)
 
-        equity = get_row(
+        total_liabilities = get_val(
+            bs_ref,
+            ["Total Liabilities Net Minority Interest", "Total Liab", "Total Liabilities"],
+            0
+        )
+
+        equity = get_val(
             bs_ref,
             ["Stockholders Equity", "Total Stockholder Equity", "Common Stock Equity", "Total Equity Gross Minority Interest"],
             0
@@ -614,17 +1209,25 @@ def get_fundamental_raw(ticker):
         if pd.isna(equity) and valid_number(total_assets, total_liabilities):
             equity = total_assets - total_liabilities
 
-        retained_earnings = get_row(bs_ref, ["Retained Earnings"], 0)
+        total_debt = get_val(bs_ref, ["Total Debt"], 0)
 
-        total_debt = get_row(bs_ref, ["Total Debt"], 0)
         if pd.isna(total_debt):
-            lt_debt = get_row(bs_ref, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
-            st_debt = get_row(bs_ref, ["Short Long Term Debt", "Short Term Debt", "Current Debt"], 0)
+            lt_debt = get_val(bs_ref, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
+            st_debt = get_val(bs_ref, ["Short Long Term Debt", "Short Term Debt", "Current Debt"], 0)
             total_debt = np.nansum([lt_debt, st_debt])
 
-        cash = get_row(bs_ref, ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"], 0)
+        cash = get_val(
+            bs_ref,
+            ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments", "Cash Financial"],
+            0
+        )
+
         if pd.isna(cash):
             cash = 0
+
+        shares0 = get_val(bs_ref, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
+        shares1 = get_val(bs_ref, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], prev_pos)
+        shares_growth = safe_div(shares0, shares1) - 1 if valid_number(shares0, shares1) and shares1 != 0 else np.nan
 
         tax_rate = 0.21
         if valid_number(tax_ttm, pretax_ttm) and pretax_ttm > 0:
@@ -636,33 +1239,20 @@ def get_fundamental_raw(ticker):
         if valid_number(equity, total_debt):
             invested_capital = equity + total_debt - cash
 
-        roic = np.nan
-        if valid_number(nopat, invested_capital) and invested_capital > 0:
-            roic = nopat / invested_capital
+        roic = safe_div(nopat, invested_capital) if valid_number(nopat, invested_capital) and invested_capital > 0 else np.nan
+        roe = safe_div(net_income_ttm, equity)
+        roa = safe_div(net_income_ttm, total_assets)
+        equity_assets = safe_div(equity, total_assets)
+        debt_equity = safe_div(total_debt, equity)
 
-        pb = safe_float(info.get("priceToBook"))
+        gross_margin = safe_div(gross_profit_ttm, revenue_ttm)
+        op_margin = safe_div(op_income_ttm, revenue_ttm)
+        fcf_margin = safe_div(fcf_ttm, revenue_ttm)
+        fcf_yield = safe_div(fcf_ttm, market_cap)
 
-        debt_ebitda = np.nan
-        if valid_number(total_debt, ebitda_ttm) and ebitda_ttm > 0:
-            debt_ebitda = total_debt / ebitda_ttm
-        else:
-            debt_ebitda = safe_float(info.get("debtToEbitda"))
+        cash_quality = safe_div(cfo_ttm, net_income_ttm)
 
-        op_margin = np.nan
-        if valid_number(op_income_ttm, revenue_ttm) and revenue_ttm != 0:
-            op_margin = op_income_ttm / revenue_ttm
-
-        asset_turnover = np.nan
-        if valid_number(revenue_ttm, total_assets) and total_assets != 0:
-            asset_turnover = revenue_ttm / total_assets
-
-        current_ratio = np.nan
-        if valid_number(current_assets, current_liabilities) and current_liabilities != 0:
-            current_ratio = current_assets / current_liabilities
-
-        cash_quality = np.nan
-        if valid_number(cfo_ttm, net_income_ttm) and abs(net_income_ttm) > 1e-9:
-            cash_quality = cfo_ttm / net_income_ttm
+        current_ratio = safe_div(current_assets, current_liabilities)
 
         interest_coverage = np.nan
         if valid_number(op_income_ttm, interest_expense_ttm):
@@ -671,112 +1261,179 @@ def get_fundamental_raw(ticker):
             else:
                 interest_coverage = op_income_ttm / abs(interest_expense_ttm)
 
-        insider_pct = safe_float(info.get("heldPercentInsiders"))
+        net_debt_ebitda = np.nan
+        if valid_number(total_debt, cash, ebitda_ttm) and ebitda_ttm > 0:
+            net_debt_ebitda = (total_debt - cash) / ebitda_ttm
 
-        market_cap = safe_float(info.get("marketCap"))
+        pb = safe_float(info.get("priceToBook"))
+        pe = safe_float(info.get("trailingPE"))
+        if pd.isna(pe):
+            pe = safe_float(info.get("forwardPE"))
+
+        ps = safe_float(info.get("priceToSalesTrailing12Months"))
+        if pd.isna(ps) and valid_number(market_cap, revenue_ttm) and revenue_ttm > 0:
+            ps = market_cap / revenue_ttm
+
+        ev_ebitda = safe_float(info.get("enterpriseToEbitda"))
+        if pd.isna(ev_ebitda):
+            enterprise_value = safe_float(info.get("enterpriseValue"))
+            if valid_number(enterprise_value, ebitda_ttm) and ebitda_ttm > 0:
+                ev_ebitda = enterprise_value / ebitda_ttm
+
+        revenue_growth = growth_rate(is_q if not is_q.empty else is_a, ["Total Revenue", "Operating Revenue"], prev_pos)
+        op_income_growth = growth_rate(is_q if not is_q.empty else is_a, ["Operating Income", "EBIT"], prev_pos)
+        net_income_growth = growth_rate(is_q if not is_q.empty else is_a, ["Net Income", "Net Income Common Stockholders"], prev_pos)
+
+        piotroski = calculate_piotroski_v2(p_f, p_b, p_cf, prev_pos=prev_pos, multiplier=p_mult)
 
         altman_z = np.nan
-        if valid_number(total_assets, current_assets, current_liabilities, op_income_ttm, market_cap, total_liabilities, revenue_ttm):
-            if total_assets != 0 and total_liabilities != 0:
-                wc = current_assets - current_liabilities
-                re = retained_earnings if valid_number(retained_earnings) else 0
-                altman_z = (
-                    1.2 * (wc / total_assets)
-                    + 1.4 * (re / total_assets)
-                    + 3.3 * (op_income_ttm / total_assets)
-                    + 0.6 * (market_cap / total_liabilities)
-                    + 1.0 * (revenue_ttm / total_assets)
-                )
+        if model == "Corporate":
+            altman_z = calculate_altman_z_v2(bs_ref, is_q if not is_q.empty else is_a, info, market_cap, multiplier)
 
-        piotroski = piotroski_annual(is_a, bs_a, cf_a)
+        beneish_m = calculate_beneish_m_score(p_f, p_b, p_cf, prev_pos=prev_pos)
 
-        return {
+        consistency = consistency_score(is_q if not is_q.empty else is_a)
+
+        metrics = {
             "ticker": ticker,
+            "name": name,
+            "sector": sector,
+            "industry": industry,
+            "currency": currency,
+            "fundamental_model": model,
+            "period_label": period_label,
+            "latest_report_date": str(pd.to_datetime(latest_date).date()) if latest_date is not None else None,
+            "reporting_frequency": reporting_frequency,
+            "reporting_multiplier": multiplier,
+
+            "price": price,
+            "market_cap": market_cap,
             "upside": upside,
-            "pb": pb,
-            "debt_ebitda": debt_ebitda,
-            "altman_z": altman_z,
-            "op_margin": op_margin,
-            "asset_turnover": asset_turnover,
+
+            "revenue_ttm": revenue_ttm,
+            "gross_profit_ttm": gross_profit_ttm,
+            "op_income_ttm": op_income_ttm,
+            "net_income_ttm": net_income_ttm,
+            "cfo_ttm": cfo_ttm,
+            "capex_ttm": capex_ttm,
+            "fcf_ttm": fcf_ttm,
+
+            "total_assets": total_assets,
+            "total_liabilities": total_liabilities,
+            "equity": equity,
+            "total_debt": total_debt,
+            "cash": cash,
+
             "roic": roic,
-            "piotroski": piotroski,
-            "current_ratio": current_ratio,
+            "roe": roe,
+            "roa": roa,
+            "equity_assets": equity_assets,
+            "debt_equity": debt_equity,
+
+            "gross_margin": gross_margin,
+            "op_margin": op_margin,
+            "fcf_margin": fcf_margin,
+            "fcf_yield": fcf_yield,
             "cash_quality": cash_quality,
+            "current_ratio": current_ratio,
             "interest_coverage": interest_coverage,
-            "insider_pct": insider_pct,
+            "net_debt_ebitda": net_debt_ebitda,
+
+            "pb": pb,
+            "pe": pe,
+            "ps": ps,
+            "ev_ebitda": ev_ebitda,
+
+            "revenue_growth": revenue_growth,
+            "op_income_growth": op_income_growth,
+            "net_income_growth": net_income_growth,
+            "shares_growth": shares_growth,
+
+            "piotroski": piotroski,
+            "altman_z": altman_z,
+            "beneish_m": beneish_m,
+            "consistency_score": consistency,
         }
+
+        conf_score, conf_grade, available_fields, expected_fields = compute_confidence(
+            model,
+            latest_date,
+            is_q,
+            is_a,
+            metrics
+        )
+
+        if model == "Corporate":
+            quality, cash_score, solvency, growth, valuation, risk, final_score = score_corporate(metrics)
+            model_note = "Modelo corporativo: calidad, caja, solvencia, crecimiento, valoración y riesgo contable."
+            not_applicable = ""
+        else:
+            quality, cash_score, solvency, growth, valuation, risk, final_score = score_financial(metrics, model)
+            model_note = f"Modelo {model}: no usa Altman/Current Ratio/Debt-EBITDA industrial como núcleo."
+            not_applicable = "Altman-Z industrial, Current Ratio industrial, Debt/EBITDA industrial."
+
+        red_flags = []
+
+        if valid_number(beneish_m) and beneish_m > -1.78:
+            red_flags.append("Beneish sospechoso")
+
+        if model == "Corporate" and valid_number(altman_z) and altman_z < 1.8:
+            red_flags.append("Altman peligro")
+
+        if valid_number(net_debt_ebitda) and net_debt_ebitda > 4:
+            red_flags.append("Deuda alta")
+
+        if valid_number(fcf_ttm) and fcf_ttm < 0:
+            red_flags.append("FCF negativo")
+
+        if valid_number(shares_growth) and shares_growth > 0.05:
+            red_flags.append("Dilución alta")
+
+        if final_score is None:
+            return None
+
+        # Cap por confianza
+        if conf_grade == "D":
+            return None
+        elif conf_grade == "C":
+            final_score = min(final_score, 70)
+        elif conf_grade == "B":
+            final_score = min(final_score, 90)
+
+        # Cap por Beneish peligroso
+        if valid_number(beneish_m) and beneish_m > -1.78:
+            final_score = min(final_score, 60)
+
+        final_score = float(np.clip(final_score, 0, 100))
+
+        metrics.update({
+            "has_fundamentals": True,
+            "fundamental_score": final_score,
+            "fundamental_rating": rating_from_score(final_score),
+            "confidence_score": conf_score,
+            "confidence_grade": conf_grade,
+            "available_fields": available_fields,
+            "expected_fields": expected_fields,
+
+            "score_quality": quality,
+            "score_cash": cash_score,
+            "score_solvency": solvency,
+            "score_growth": growth,
+            "score_valuation": valuation,
+            "score_risk": risk,
+
+            "red_flags": ", ".join(red_flags) if red_flags else "",
+            "model_note": model_note,
+            "not_applicable": not_applicable,
+
+            # Compatibilidad con versiones anteriores
+            "votos_netos": final_score,
+        })
+
+        return metrics
 
     except Exception:
         return None
-
-
-def score_fundamental(d):
-    neutral = {
-        "upside": 0.0,
-        "pb": 3.0,
-        "debt_ebitda": 2.5,
-        "altman_z": 2.4,
-        "op_margin": 0.10,
-        "asset_turnover": 0.50,
-        "roic": 0.08,
-        "piotroski": 5.0,
-        "current_ratio": 1.2,
-        "cash_quality": 1.0,
-        "interest_coverage": 3.0,
-        "insider_pct": 0.02,
-    }
-
-    imputed = 0
-
-    for k, v in neutral.items():
-        if k not in d or pd.isna(d[k]):
-            d[k] = v
-            imputed += 1
-
-    c_valor = (
-        score_var(d["upside"], 0.20, 0)
-        + score_var(d["pb"], 1.5, 6, reverse=True)
-    )
-
-    a_solvencia = (
-        score_var(d["debt_ebitda"], 1.5, 4, reverse=True)
-        + score_var(d["altman_z"], 3.0, 1.8)
-    )
-
-    m_margen = (
-        score_var(d["op_margin"], 0.15, 0.05)
-        + score_var(d["asset_turnover"], 0.8, 0.3)
-    )
-
-    e_eficiencia = (
-        score_var(d["roic"], 0.15, 0.05)
-        + score_var(d["piotroski"], 7, 3)
-    )
-
-    l_liquidez = (
-        score_var(d["current_ratio"], 2.0, 0.8)
-        + score_var(d["cash_quality"], 1.2, 0.8)
-    )
-
-    s_skin = (
-        score_var(d["interest_coverage"], 6.0, 1.5)
-        + score_var(d["insider_pct"], 0.05, 0.01)
-    )
-
-    total = c_valor + a_solvencia + m_margen + e_eficiencia + l_liquidez + s_skin
-
-    d.update({
-        "C_valor": c_valor,
-        "A_solvencia": a_solvencia,
-        "M_margen": m_margen,
-        "E_eficiencia": e_eficiencia,
-        "L_liquidez": l_liquidez,
-        "S_skin": s_skin,
-        "votos_netos": total,
-        "imputed_fields": imputed
-    })
-
-    return d
 
 
 def add_fundamentals(assets_df, universe_df):
@@ -784,7 +1441,7 @@ def add_fundamentals(assets_df, universe_df):
 
     candidates = universe_df[~universe_df["technical_only"]]["ticker"].tolist()
 
-    print(f"🧮 Calculando fundamentales para {len(candidates)} activos elegibles...")
+    print(f"🧬 LCrack Fundamental v2: {len(candidates)} activos elegibles...")
 
     with ThreadPoolExecutor(max_workers=CONFIG["MAX_WORKERS"]) as executor:
         futures = {executor.submit(get_fundamental_raw, t): t for t in candidates}
@@ -794,7 +1451,8 @@ def add_fundamentals(assets_df, universe_df):
             try:
                 raw = fut.result()
                 if raw:
-                    fund_rows.append(score_fundamental(raw))
+                    fund_rows.append(raw)
+                    print(f"   ✅ Fundamental: {ticker} -> {raw.get('fundamental_score'):.1f} {raw.get('fundamental_rating')} {raw.get('confidence_grade')}")
             except Exception:
                 pass
 
@@ -804,18 +1462,54 @@ def add_fundamentals(assets_df, universe_df):
 
     fund_df = pd.DataFrame(fund_rows)
 
-    if len(fund_df) >= 4:
-        fund_df["cuartil"] = pd.qcut(
-            fund_df["votos_netos"].rank(method="first"),
-            4,
-            labels=["Q4", "Q3", "Q2", "Q1"]
-        ).astype(str)
-    else:
-        fund_df["cuartil"] = "N/A"
+    valid = fund_df["fundamental_score"].notna()
 
-    fund_df["has_fundamentals"] = True
+    fund_df["sector_percentile"] = np.nan
 
-    merged = assets_df.merge(fund_df, on="ticker", how="left")
+    if valid.sum() > 0:
+        global_pct = fund_df.loc[valid, "fundamental_score"].rank(pct=True)
+
+        fund_df.loc[valid, "sector_percentile"] = global_pct
+
+        # Intento 1: percentil por modelo + sector si hay suficiente muestra
+        try:
+            group_cols = ["fundamental_model", "sector"]
+            group_sizes = fund_df.groupby(group_cols)["ticker"].transform("count")
+            pct_sector = fund_df.groupby(group_cols)["fundamental_score"].rank(pct=True)
+
+            mask = valid & (group_sizes >= 4)
+            fund_df.loc[mask, "sector_percentile"] = pct_sector.loc[mask]
+        except Exception:
+            pass
+
+        # Intento 2: percentil por modelo si no hay suficiente sector
+        try:
+            group_sizes_model = fund_df.groupby("fundamental_model")["ticker"].transform("count")
+            pct_model = fund_df.groupby("fundamental_model")["fundamental_score"].rank(pct=True)
+
+            mask = valid & (fund_df["sector_percentile"].isna()) & (group_sizes_model >= 4)
+            fund_df.loc[mask, "sector_percentile"] = pct_model.loc[mask]
+        except Exception:
+            pass
+
+    def q_from_pct(p):
+        if pd.isna(p):
+            return "N/A"
+        if p >= 0.75:
+            return "Q1"
+        if p >= 0.50:
+            return "Q2"
+        if p >= 0.25:
+            return "Q3"
+        return "Q4"
+
+    fund_df["fundamental_q"] = fund_df["sector_percentile"].apply(q_from_pct)
+
+    # Compatibilidad con frontend antiguo
+    fund_df["cuartil"] = fund_df["fundamental_q"]
+
+    merged = assets_df.merge(fund_df, on="ticker", how="left", suffixes=("", "_fund"))
+
     merged["has_fundamentals"] = merged["has_fundamentals"].fillna(False)
 
     return merged
@@ -1038,7 +1732,7 @@ INDEX_HTML = r"""
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sovereign Daily Command Center</title>
+<title>LCrack Sovereign</title>
 
 <style>
 :root {
@@ -1281,7 +1975,7 @@ button.danger {
 
 <body>
 <div class="container">
-  <h1>🛰️ Sovereign Daily Command Center</h1>
+  <h1>🛰️ LCrack Sovereign</h1>
   <div class="subtitle" id="subtitle">Cargando datos...</div>
 
   <div class="grid" id="summaryCards"></div>
@@ -1333,14 +2027,46 @@ button.danger {
     <div class="card">
       <h2>📡 Universo completo</h2>
       <div class="controls">
-        <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
-        <select id="universeRegime" onchange="renderUniverse()">
-          <option value="">Todos los regímenes</option>
-          <option value="ALCISTA">Alcista</option>
-          <option value="LATERAL">Lateral</option>
-          <option value="BAJISTA">Bajista</option>
-        </select>
-      </div>
+  <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
+
+  <select id="universeRegime" onchange="renderUniverse()">
+    <option value="">Todos los regímenes</option>
+    <option value="ALCISTA">Alcista</option>
+    <option value="LATERAL">Lateral</option>
+    <option value="BAJISTA">Bajista</option>
+  </select>
+
+  <select id="fundModelFilter" onchange="renderUniverse()">
+    <option value="">Todos los modelos fundamentales</option>
+    <option value="Corporate">Corporate</option>
+    <option value="Bank">Bank</option>
+    <option value="Insurance">Insurance</option>
+    <option value="Financial">Financial</option>
+  </select>
+
+  <select id="fundConfidenceFilter" onchange="renderUniverse()">
+    <option value="">Confianza mínima: Todas</option>
+    <option value="A">Confianza A</option>
+    <option value="B">Confianza B+</option>
+    <option value="C">Confianza C+</option>
+    <option value="D">Confianza D+</option>
+  </select>
+
+  <select id="fundQFilter" onchange="renderUniverse()">
+    <option value="">Todos los Q</option>
+    <option value="Q1">Q1</option>
+    <option value="Q2">Q2</option>
+    <option value="Q3">Q3</option>
+    <option value="Q4">Q4</option>
+  </select>
+
+  <input id="fundMinScore" type="number" min="0" max="100" step="1" placeholder="Score mínimo" oninput="renderUniverse()">
+
+  <label class="small">
+    <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
+    Solo con fundamentales
+  </label>
+</div>
       <div id="universeTable"></div>
     </div>
   </section>
@@ -1386,7 +2112,7 @@ button.danger {
   </section>
 
   <div class="footer">
-    Sovereign Daily Command Center · Datos vía yfinance/FRED/Fear & Greed · Actualización automática vía GitHub Actions.
+    LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed · Actualización automática vía GitHub Actions.
   </div>
 </div>
 
@@ -1506,18 +2232,50 @@ function renderGlobal() {
 }
 
 function signalRow(a) {
-  const fund = a.has_fundamentals
+  const hasFund = a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined;
+
+  const fund = hasFund
     ? `
-      <div><b>${fmtNum(a.votos_netos,1)}</b> ${badge(qLabel(a.cuartil), "q")}</div>
-      <div class="small">
-        C ${fmtNum(a.C_valor,1)} · A ${fmtNum(a.A_solvencia,1)} · M ${fmtNum(a.M_margen,1)} ·
-        E ${fmtNum(a.E_eficiencia,1)} · L ${fmtNum(a.L_liquidez,1)} · S ${fmtNum(a.S_skin,1)}
+      <div>
+        <b>${fmtNum(a.fundamental_score,1)}/100</b>
+        ${badge(a.fundamental_rating || "—", "q")}
+        ${badge(a.fundamental_q || "—", "q")}
+        ${badge("Conf " + (a.confidence_grade || "—"), "neutral")}
       </div>
+
       <div class="small">
-        ROIC ${fmtPct(a.roic,1)} · Altman ${fmtNum(a.altman_z,2)} · Piotroski ${fmtNum(a.piotroski,1)}
+        Modelo: <b>${a.fundamental_model || "—"}</b> · Periodo: <b>${a.period_label || "N/A"}</b>
       </div>
+
+      <div class="small">
+        Calidad ${fmtNum(a.score_quality,0)} ·
+        Caja ${fmtNum(a.score_cash,0)} ·
+        Solvencia ${fmtNum(a.score_solvency,0)} ·
+        Crecimiento ${fmtNum(a.score_growth,0)} ·
+        Valoración ${fmtNum(a.score_valuation,0)} ·
+        Riesgo ${fmtNum(a.score_risk,0)}
+      </div>
+
+      <div class="small">
+        ROIC ${fmtPct(a.roic,1)} ·
+        ROE ${fmtPct(a.roe,1)} ·
+        FCF Yield ${fmtPct(a.fcf_yield,1)} ·
+        Altman ${fmtNum(a.altman_z,2)} ·
+        Piotroski ${fmtNum(a.piotroski,1)}
+      </div>
+
+      <div class="small">
+        P/E ${fmtNum(a.pe,1)} ·
+        P/B ${fmtNum(a.pb,2)} ·
+        ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)} ·
+        Beneish ${fmtNum(a.beneish_m,2)}
+      </div>
+
+      ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
+
+      ${a.not_applicable ? `<div class="small">No aplica: ${a.not_applicable}</div>` : ""}
     `
-    : `<div class="small">Sin fundamentales / técnico-only</div>`;
+    : `<div class="small">Sin fundamentales / técnico-only / datos insuficientes</div>`;
 
   return `
     <tr>
@@ -1577,9 +2335,40 @@ function renderSignals() {
   `;
 }
 
+function confidenceValue(c) {
+  if (c === "A") return 4;
+  if (c === "B") return 3;
+  if (c === "C") return 2;
+  if (c === "D") return 1;
+  return 0;
+}
+
+function fundSummary(a) {
+  if (!(a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined)) {
+    return "—";
+  }
+
+  return `
+    <b>${fmtNum(a.fundamental_score,1)}/100</b>
+    <div class="small">
+      ${a.fundamental_rating || "—"} · ${a.fundamental_q || "—"} · Conf ${a.confidence_grade || "—"}
+    </div>
+    <div class="small">
+      ${a.fundamental_model || "—"} · ${a.period_label || "N/A"}
+    </div>
+    ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
+  `;
+}
+
 function renderUniverse() {
   const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
   const regime = document.getElementById("universeRegime")?.value || "";
+  const modelFilter = document.getElementById("fundModelFilter")?.value || "";
+  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
+  const qFilter = document.getElementById("fundQFilter")?.value || "";
+  const minScoreRaw = document.getElementById("fundMinScore")?.value;
+  const minScore = minScoreRaw === "" || minScoreRaw === undefined ? null : Number(minScoreRaw);
+  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
 
   let data = allAssets.slice();
 
@@ -1587,7 +2376,8 @@ function renderUniverse() {
     data = data.filter(a =>
       String(a.ticker).toUpperCase().includes(q) ||
       String(a.name).toUpperCase().includes(q) ||
-      String(a.sector).toUpperCase().includes(q)
+      String(a.sector).toUpperCase().includes(q) ||
+      String(a.industry).toUpperCase().includes(q)
     );
   }
 
@@ -1595,18 +2385,47 @@ function renderUniverse() {
     data = data.filter(a => String(a.regime || "").includes(regime));
   }
 
-  data = data.sort((a,b) => String(a.ticker).localeCompare(String(b.ticker)));
+  if (onlyFund) {
+    data = data.filter(a => a.has_fundamentals === true && a.fundamental_score !== null && a.fundamental_score !== undefined);
+  }
+
+  if (modelFilter) {
+    data = data.filter(a => String(a.fundamental_model || "") === modelFilter);
+  }
+
+  if (confFilter) {
+    data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
+  }
+
+  if (qFilter) {
+    data = data.filter(a => String(a.fundamental_q || "") === qFilter);
+  }
+
+  if (minScore !== null && !Number.isNaN(minScore)) {
+    data = data.filter(a => Number(a.fundamental_score) >= minScore);
+  }
+
+  data = data.sort((a,b) => {
+    const fa = a.fundamental_score === null || a.fundamental_score === undefined ? -1 : Number(a.fundamental_score);
+    const fb = b.fundamental_score === null || b.fundamental_score === undefined ? -1 : Number(b.fundamental_score);
+
+    if (fb !== fa) return fb - fa;
+
+    return String(a.ticker).localeCompare(String(b.ticker));
+  });
 
   const rows = data.map(a => `
     <tr>
-      <td><div class="ticker">${a.ticker}</div><div class="name">${a.name || "—"}</div></td>
+      <td>
+        <div class="ticker">${a.ticker}</div>
+        <div class="name">${a.name || "—"}</div>
+      </td>
       <td>${badge(a.main_signal || "—")}</td>
       <td>${badge(a.regime || "—")}</td>
       <td>${fmtNum(a.close,2)}</td>
+      <td>${fundSummary(a)}</td>
       <td>${a.pvi_status || "—"}</td>
       <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-      <td>${a.has_fundamentals ? fmtNum(a.votos_netos,1) : "—"}</td>
-      <td>${a.has_fundamentals ? qLabel(a.cuartil) : "—"}</td>
       <td>${a.bucket || "—"}</td>
     </tr>
   `).join("");
@@ -1615,7 +2434,14 @@ function renderUniverse() {
     <table>
       <thead>
         <tr>
-          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Precio</th><th>PVI</th><th>Dist. McG</th><th>Score</th><th>Q</th><th>Universo</th>
+          <th>Activo</th>
+          <th>Señal</th>
+          <th>Régimen</th>
+          <th>Precio</th>
+          <th>Fundamental</th>
+          <th>PVI</th>
+          <th>Dist. McG</th>
+          <th>Universo</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -1837,7 +2663,7 @@ loadData();
 # ============================================================
 
 def main():
-    print("🚀 Sovereign Daily Command Center")
+    print("🚀 LCrack Sovereign")
     site_dir = Path("site")
     data_dir = site_dir / "data"
 
