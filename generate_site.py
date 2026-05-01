@@ -2555,6 +2555,7 @@ INDEX_HTML = r"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LCrack Sovereign</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 
 <style>
 :root {
@@ -2570,9 +2571,7 @@ INDEX_HTML = r"""
   --purple: #d8b4fe;
   --orange: #fdba74;
 }
-
 * { box-sizing: border-box; }
-
 body {
   margin: 0;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -2582,39 +2581,13 @@ body {
     var(--bg);
   color: var(--text);
 }
-
-.container {
-  max-width: 1650px;
-  margin: auto;
-  padding: 28px;
-}
-
-h1 {
-  font-size: 38px;
-  margin: 0;
-  letter-spacing: -.03em;
-}
-
-.subtitle {
-  color: var(--muted);
-  margin-top: 8px;
-  margin-bottom: 24px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.grid2 {
-  display: grid;
-  grid-template-columns: 1.1fr .9fr;
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
+.container { max-width: 1650px; margin: auto; padding: 28px; }
+h1 { font-size: 38px; margin: 0; letter-spacing: -.03em; }
+.subtitle { color: var(--muted); margin-top: 8px; margin-bottom: 24px; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+.grid2 { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-bottom: 18px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
 .card {
   background: rgba(15, 23, 42, .92);
   border: 1px solid var(--border);
@@ -2622,35 +2595,12 @@ h1 {
   padding: 18px;
   box-shadow: 0 10px 35px rgba(0,0,0,.25);
 }
-
-.metric-title {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-}
-
-.metric-big {
-  font-size: 28px;
-  font-weight: 950;
-  margin-top: 8px;
-}
-
-.small {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 5px;
-  line-height: 1.35;
-}
-
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 22px 0;
-}
-
+.card h3 { margin: 0 0 12px 0; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.metric-title { color: var(--muted); font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.metric-big { font-size: 28px; font-weight: 950; margin-top: 8px; }
+.metric-val { font-size: 22px; font-weight: 800; }
+.small { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.35; }
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
 .tab {
   cursor: pointer;
   border: 1px solid var(--border);
@@ -2660,24 +2610,10 @@ h1 {
   padding: 10px 14px;
   font-weight: 800;
 }
-
-.tab.active {
-  background: rgba(59,130,246,.25);
-  color: var(--blue);
-  border-color: rgba(59,130,246,.5);
-}
-
+.tab.active { background: rgba(59,130,246,.25); color: var(--blue); border-color: rgba(59,130,246,.5); }
 .section { display: none; }
 .section.active { display: block; }
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-}
-
+table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 14px; border: 1px solid var(--border); }
 th {
   background: rgba(30,41,59,.96);
   color: #cbd5e1;
@@ -2689,15 +2625,8 @@ th {
   position: sticky;
   top: 0;
 }
-
-td {
-  border-top: 1px solid rgba(148,163,184,.13);
-  padding: 11px;
-  vertical-align: top;
-}
-
+td { border-top: 1px solid rgba(148,163,184,.13); padding: 11px; vertical-align: top; }
 tr:hover { background: rgba(30,41,59,.5); }
-
 .badge {
   display: inline-block;
   padding: 5px 9px;
@@ -2708,93 +2637,95 @@ tr:hover { background: rgba(30,41,59,.5); }
   white-space: nowrap;
   margin: 1px;
 }
-
-.buy { color: var(--green); background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.35); }
-.sell { color: var(--red); background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.35); }
-.partial { color: var(--yellow); background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.35); }
-.neutral { color: #cbd5e1; background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
-.mixed { color: var(--purple); background: rgba(168,85,247,.15); border-color: rgba(168,85,247,.35); }
-.qbadge { color: var(--blue); background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); }
-.vbadge { color: var(--orange); background: rgba(251,146,60,.15); border-color: rgba(251,146,60,.35); }
-.warnbadge { color: var(--yellow); background: rgba(245,158,11,.14); border-color: rgba(245,158,11,.35); }
-
-.ticker {
-  font-weight: 950;
-  font-size: 16px;
-}
-
-.name {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 3px;
-}
-
-.controls {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-  align-items: center;
-}
-
-input, select, button {
-  border: 1px solid var(--border);
-  background: rgba(15,23,42,.95);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 10px;
-}
-
-button {
-  cursor: pointer;
-  font-weight: 800;
-}
-
-button.primary {
-  background: rgba(37,99,235,.42);
-  border-color: rgba(59,130,246,.55);
-  color: white;
-}
-
-button.danger {
-  background: rgba(220,38,38,.22);
-  border-color: rgba(248,113,113,.4);
-  color: var(--red);
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
+.buy    { color: var(--green);  background: rgba(34,197,94,.15);   border-color: rgba(34,197,94,.35); }
+.sell   { color: var(--red);    background: rgba(239,68,68,.15);   border-color: rgba(239,68,68,.35); }
+.partial{ color: var(--yellow); background: rgba(245,158,11,.15);  border-color: rgba(245,158,11,.35); }
+.neutral{ color: #cbd5e1;       background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
+.mixed  { color: var(--purple); background: rgba(168,85,247,.15);  border-color: rgba(168,85,247,.35); }
+.qbadge { color: var(--blue);   background: rgba(59,130,246,.15);  border-color: rgba(59,130,246,.35); }
+.vbadge { color: var(--orange); background: rgba(251,146,60,.15);  border-color: rgba(251,146,60,.35); }
+.warnbadge{ color: var(--yellow);background: rgba(245,158,11,.14); border-color: rgba(245,158,11,.35); }
+.ticker { font-weight: 950; font-size: 16px; }
+.name   { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+input, select, button { border: 1px solid var(--border); background: rgba(15,23,42,.95); color: var(--text); border-radius: 10px; padding: 10px; }
+button { cursor: pointer; font-weight: 800; }
+button.primary { background: rgba(37,99,235,.42); border-color: rgba(59,130,246,.55); color: white; }
+button.danger { background: rgba(220,38,38,.22); border-color: rgba(248,113,113,.4); color: var(--red); }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto; gap: 8px; margin-bottom: 14px; }
 .warning { color: var(--yellow); }
+.score-bar-wrap { width: 100%; height: 6px; background: rgba(148,163,184,.2); border-radius: 999px; overflow: hidden; margin-top: 5px; }
+.score-bar { height: 6px; border-radius: 999px; }
+.footer { color: var(--muted); margin-top: 28px; font-size: 12px; }
 
-.score-bar-wrap {
-  width: 100%;
-  height: 6px;
-  background: rgba(148,163,184,.2);
-  border-radius: 999px;
-  overflow: hidden;
-  margin-top: 5px;
+/* ── Deep Dive ─────────────────────────────────────── */
+#dd-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+#dd-ticker-input {
+  font-size: 18px;
+  font-weight: 900;
+  padding: 12px 18px;
+  border-radius: 12px;
+  width: 180px;
+  text-transform: uppercase;
 }
-
-.score-bar {
-  height: 6px;
-  border-radius: 999px;
+#dd-search-btn { padding: 12px 24px; font-size: 15px; }
+#dd-ticker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
 }
-
-.footer {
-  color: var(--muted);
-  margin-top: 28px;
+#dd-ticker-list button {
+  padding: 6px 12px;
   font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+}
+#dd-loading { color: var(--muted); font-size: 14px; padding: 20px 0; }
+
+#dd-body { display: none; }
+
+#dd-chart-price   { width: 100%; height: 400px; border-radius: 12px; overflow: hidden; }
+#dd-chart-pvi     { width: 100%; height: 180px; border-radius: 12px; overflow: hidden; margin-top: 8px; }
+#dd-chart-rvol    { width: 100%; height: 140px; border-radius: 12px; overflow: hidden; margin-top: 8px; }
+#dd-chart-dist    { width: 100%; height: 140px; border-radius: 12px; overflow: hidden; margin-top: 8px; }
+
+.dd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 0 12px 0;
+  font-size: 12px;
+}
+.dd-legend span { display: flex; align-items: center; gap: 5px; }
+.dd-legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+.kv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.kv-item { background: rgba(30,41,59,.6); border-radius: 10px; padding: 10px 12px; }
+.kv-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.kv-value { font-size: 16px; font-weight: 800; margin-top: 4px; }
+
+.dd-section-title {
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  margin: 20px 0 10px 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.signal-timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 @media (max-width: 900px) {
-  .grid, .grid2, .form-grid {
-    grid-template-columns: 1fr;
-  }
+  .grid, .grid2, .grid3, .grid4, .form-grid { grid-template-columns: 1fr; }
+  #dd-chart-price { height: 260px; }
 }
 </style>
 </head>
@@ -2807,13 +2738,15 @@ button.danger {
   <div class="grid" id="summaryCards"></div>
 
   <div class="tabs">
-    <button class="tab active" onclick="showTab('global', event)">🌍 Panel global</button>
-    <button class="tab" onclick="showTab('signals', event)">🎯 Señales</button>
-    <button class="tab" onclick="showTab('universe', event)">📡 Universo</button>
-    <button class="tab" onclick="showTab('portfolio', event)">💼 Mi cartera</button>
-    <button class="tab" onclick="showTab('rules', event)">📘 Reglas</button>
+    <button class="tab active" onclick="showTab('global',    event)">🌍 Panel global</button>
+    <button class="tab"        onclick="showTab('signals',   event)">🎯 Señales</button>
+    <button class="tab"        onclick="showTab('universe',  event)">📡 Universo</button>
+    <button class="tab"        onclick="showTab('deepdive',  event)">🔍 Deep Dive</button>
+    <button class="tab"        onclick="showTab('portfolio', event)">💼 Mi cartera</button>
+    <button class="tab"        onclick="showTab('rules',     event)">📘 Reglas</button>
   </div>
 
+  <!-- ═══════════════════ GLOBAL ════════════════════ -->
   <section id="global" class="section active">
     <div class="grid2">
       <div class="card">
@@ -2827,6 +2760,7 @@ button.danger {
     </div>
   </section>
 
+  <!-- ═══════════════════ SEÑALES ════════════════════ -->
   <section id="signals" class="section">
     <div class="card">
       <h2>🎯 Señales recientes</h2>
@@ -2849,26 +2783,24 @@ button.danger {
     </div>
   </section>
 
+  <!-- ═══════════════════ UNIVERSO ═══════════════════ -->
   <section id="universe" class="section">
     <div class="card">
       <h2>📡 Universo completo</h2>
       <div class="controls">
         <input id="universeSearch" placeholder="Buscar ticker, nombre, sector..." oninput="renderUniverse()">
-
         <select id="universeRegime" onchange="renderUniverse()">
           <option value="">Todos los regímenes</option>
           <option value="ALCISTA">Alcista</option>
           <option value="LATERAL">Lateral</option>
           <option value="BAJISTA">Bajista</option>
         </select>
-
         <select id="fundConfidenceFilter" onchange="renderUniverse()">
           <option value="">Confianza: todas</option>
           <option value="A">Confianza A</option>
           <option value="B">Confianza B+</option>
           <option value="C">Confianza C+</option>
         </select>
-
         <select id="fundQualityFilter" onchange="renderUniverse()">
           <option value="">Calidad: todas</option>
           <option value="85">Excelente 85+</option>
@@ -2876,28 +2808,24 @@ button.danger {
           <option value="65">Buena 65+</option>
           <option value="50">Media 50+</option>
         </select>
-
         <select id="fundValuationFilter" onchange="renderUniverse()">
           <option value="">Precio/Fund.: todos</option>
           <option value="80">Muy barata 80+</option>
           <option value="65">Barata 65+</option>
           <option value="45">Razonable 45+</option>
         </select>
-
         <select id="entryQualityFilter" onchange="renderUniverse()">
           <option value="">Entrada: todas</option>
           <option value="85">Entrada A</option>
           <option value="70">Entrada B+</option>
           <option value="55">Entrada C+</option>
         </select>
-
         <select id="exitPressureFilter" onchange="renderUniverse()">
           <option value="">Presión salida: todas</option>
           <option value="25">Vigilar+</option>
           <option value="50">Reducir+</option>
           <option value="75">Salida fuerte</option>
         </select>
-
         <select id="fundQFilter" onchange="renderUniverse()">
           <option value="">Q calidad: todos</option>
           <option value="Q1">Q1 ⭐ TOP</option>
@@ -2905,7 +2833,6 @@ button.danger {
           <option value="Q3">Q3 ⚖️</option>
           <option value="Q4">Q4 ⚠️</option>
         </select>
-
         <label class="small">
           <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
           Solo con fundamentales
@@ -2915,13 +2842,83 @@ button.danger {
     </div>
   </section>
 
+  <!-- ═══════════════════ DEEP DIVE ══════════════════ -->
+  <section id="deepdive" class="section">
+    <div class="card">
+      <h2>🔍 Análisis profundo</h2>
+
+      <!-- Barra de búsqueda -->
+      <div id="dd-header">
+        <input id="dd-ticker-input" placeholder="AAPL" onkeydown="if(event.key==='Enter') loadDeepDive()">
+        <button class="primary dd-search-btn" onclick="loadDeepDive()">Analizar</button>
+        <span class="small" style="color:var(--muted)">
+          Selecciona cualquier ticker del universo o escríbelo directamente
+        </span>
+      </div>
+
+      <!-- Atajos rápidos de tickers -->
+      <div id="dd-ticker-list"></div>
+
+      <div id="dd-loading"></div>
+
+      <!-- Cuerpo del análisis (oculto hasta cargar) -->
+      <div id="dd-body">
+
+        <!-- Cabecera del activo -->
+        <div id="dd-asset-header" style="margin-bottom:18px"></div>
+
+        <!-- ── Señal y estado ── -->
+        <div class="dd-section-title">📊 Estado técnico y señal</div>
+        <div class="grid4" id="dd-signal-cards"></div>
+        <div class="signal-timeline" id="dd-signal-timeline"></div>
+
+        <!-- ── Gráfico de precio ── -->
+        <div class="dd-section-title">📈 Precio · McGinley Régimen (N=20) · McGinley Salida (N=45)</div>
+        <div class="dd-legend">
+          <span><span class="dot" style="background:#e2e8f0"></span>Precio</span>
+          <span><span class="dot" style="background:#3b82f6"></span>McG Régimen (N=20)</span>
+          <span><span class="dot" style="background:#f97316"></span>McG Salida (N=45)</span>
+          <span><span class="dot" style="background:#22c55e"></span>▲ Cruce compra PVI</span>
+          <span><span class="dot" style="background:#ef4444"></span>▼ Cruce venta PVI</span>
+          <span><span class="dot" style="background:#f97316"></span>▼ Rotura McG</span>
+        </div>
+        <div id="dd-chart-price"></div>
+
+        <!-- ── PVI ── -->
+        <div class="dd-section-title">🔵 PVI vs Señal PVI (EMA 120)</div>
+        <div class="dd-legend">
+          <span><span class="dot" style="background:#60a5fa"></span>PVI</span>
+          <span><span class="dot" style="background:#f59e0b"></span>Señal PVI (EMA 120)</span>
+        </div>
+        <div id="dd-chart-pvi"></div>
+
+        <!-- ── RVOL / ATR ── -->
+        <div class="dd-section-title">📊 Volumen relativo (RVOL) · Umbral 1.5x</div>
+        <div id="dd-chart-rvol"></div>
+
+        <!-- ── Distancia al McGinley de salida ── -->
+        <div class="dd-section-title">📏 Distancia al McGinley de salida (%)</div>
+        <div class="dd-legend">
+          <span><span class="dot" style="background:#a78bfa"></span>Dist % al McG Salida · positivo=precio encima · negativo=precio debajo</span>
+        </div>
+        <div id="dd-chart-dist"></div>
+
+        <!-- ── Métricas técnicas ── -->
+        <div class="dd-section-title">⚙️ Indicadores snapshot</div>
+        <div class="kv-grid" id="dd-tech-kv"></div>
+
+        <!-- ── Fundamentales ── -->
+        <div id="dd-fund-section"></div>
+
+      </div><!-- /dd-body -->
+    </div>
+  </section>
+
+  <!-- ═══════════════════ CARTERA ════════════════════ -->
   <section id="portfolio" class="section">
     <div class="card">
       <h2>💼 Mi cartera privada</h2>
-      <p class="small">
-        Tus posiciones se guardan solo en este navegador mediante localStorage.
-      </p>
-
+      <p class="small">Tus posiciones se guardan solo en este navegador mediante localStorage.</p>
       <div class="form-grid">
         <input id="pfTicker" placeholder="Ticker, ej. NVDA">
         <input id="pfQty" type="number" step="0.0001" placeholder="Cantidad">
@@ -2930,13 +2927,11 @@ button.danger {
         <input id="pfNote" placeholder="Nota">
         <button class="primary" onclick="addPosition()">Añadir</button>
       </div>
-
       <div class="controls">
         <button onclick="exportPortfolio()">Exportar cartera JSON</button>
         <input type="file" id="importFile" accept=".json" onchange="importPortfolio(event)">
         <button class="danger" onclick="clearPortfolio()">Vaciar cartera</button>
       </div>
-
       <div id="portfolioSummary"></div>
       <div id="portfolioTable"></div>
     </div>
@@ -2951,663 +2946,827 @@ button.danger {
       <p><b>Compra:</b> PVI cruza su EMA(120) de abajo hacia arriba y el PVI se mantiene por encima de su señal.</p>
       <p><b>Venta 50% PVI:</b> PVI cruza su EMA(120) de arriba hacia abajo.</p>
       <p><b>Venta 50% McGinley:</b> el precio cruza la McGinley de salida (45) de arriba hacia abajo.</p>
-      <p><b>Venta 100%:</b> PVI negativo + precio por debajo de la McGinley de salida (o señal “🔴 VENTA 100%”).</p>
-      <p><b>RVOL alto (≥1.5x):</b> refuerza las entradas si el volumen es alcista y agrava la presión de salida si es bajista.</p>
-      <p><b>Presión de salida:</b> mide el deterioro técnico persistente, aunque la señal puntual ya haya caducado.</p>
+      <p><b>Venta 100%:</b> PVI negativo + precio por debajo de la McGinley de salida.</p>
+      <p><b>RVOL alto (≥1.5x):</b> refuerza entradas alcistas y agrava presión de salida bajista.</p>
 
       <h3>2. Cómo leer una señal de COMPRA</h3>
-      <p>
-        <b>1) Señal y frescura</b><br>
-        – Operar solo compras cuando la señal principal es <b>🟢 COMPRA</b> y la frescura es <b>🔴 Hoy</b> o <b>🟠 Reciente</b>.<br>
-        – Si la frescura es <b>⚪ Antigua</b>, tratarla como señal vieja: solo válida si el precio sigue cerca del McGinley.
-      </p>
+      <p><b>1) Señal y frescura</b><br>Operar compras solo cuando la señal es 🟢 COMPRA y la frescura es 🔴 Hoy o 🟠 Reciente.</p>
+      <p><b>2) Régimen y estado técnico</b><br>Mejor contexto: 🟢 ALCISTA. En 🟡 LATERAL, más exigente. En 🔴 BAJISTA, evitar compras.</p>
+      <p><b>3) Calidad de entrada</b><br>Score ≥ 80 ideal. Score 70–80 aceptable. Score &lt; 70 → evitar.</p>
+      <p><b>4) Volumen y calidad del PVI</b><br>Si VOL NO FIABLE, validar en TradingView.</p>
 
-      <p>
-        <b>2) Régimen y estado técnico</b><br>
-        – Mejor contexto: <b>🟢 ALCISTA</b> o estado <b>🟢 Alcista confirmado</b>.<br>
-        – En <b>🟡 LATERAL</b> ser más exigente, solo compras selectivas.<br>
-        – En <b>🔴 BAJISTA</b> evitar nuevas compras; solo apuestas muy tácticas y pequeñas.
-      </p>
-
-      <p>
-        <b>3) Calidad de la entrada (entry_quality_score)</b><br>
-        – <b>Entrada ideal:</b> score ≥ 80, etiqueta tipo <b>🟢 ALTA</b> o <b>🟢 BUENA</b>, PVI POSITIVO, gap PVI no micro y, si es posible, RVOL ≥ 1.5x con vela alcista.<br>
-        – <b>Entrada aceptable:</b> score 70–80, pero con alguna pega (lateralidad, poco volumen, cerca de McGinley salida…).<br>
-        – <b>Entrada floja:</b> score &lt; 70 → mejor no abrir posición nueva salvo trade pequeño y muy táctico.
-      </p>
-
-      <p>
-        <b>4) Volumen y calidad del PVI</b><br>
-        – El sistema revisa si el volumen histórico es fiable (≥60% de días con volumen &gt; 0).<br>
-        – Si <b>VOL NO FIABLE</b>, el PVI puede ser menos representativo: conviene validar el gráfico en TradingView.<br>
-        – El filtro de volumen (RVOL) puede actuar como:<br>
-        &nbsp;&nbsp;• <b>Filtro duro</b> (modo “hard”): bloquea compras si el volumen no acompaña.<br>
-        &nbsp;&nbsp;• <b>Penalización</b> (modo “score”): no bloquea, pero baja el score de entrada.<br>
-        &nbsp;&nbsp;• <b>Aviso</b> (modo “warn”): no bloquea, pero marca la señal como “bloqueada por volumen bajo”.
-      </p>
-
-      <h3>5. Cuándo REDUCIR o CERRAR (exit_pressure)</h3>
-      <p>
-        <b>Presión de salida (exit_pressure_score)</b><br>
-        – <b>&lt; 25</b> → <b>🟢 Baja</b>: no hay prisa por vender; se puede mantener si el resto acompaña.<br>
-        – <b>25–50</b> → <b>🟡 Vigilar</b>: hay deterioro parcial; ajustar stop, no aumentar posición.<br>
-        – <b>50–75</b> → <b>🟠 Reducir</b>: vender parte; suele haber precio bajo McGinley salida y/o régimen bajista/lateral.<br>
-        – <b>≥ 75</b> o señal “VENTA 100%” → <b>🔴 Salida fuerte</b>: cerrar o reducir agresivamente.
-      </p>
+      <h3>5. Cuándo REDUCIR o CERRAR</h3>
+      <p>&lt;25 🟢 Baja · 25–50 🟡 Vigilar · 50–75 🟠 Reducir · ≥75 🔴 Salida fuerte</p>
 
       <h3>6. Stop y tamaño de posición</h3>
-      <p>
-        El sistema calcula la distancia del precio a la McGinley de salida en % y en ATR:<br>
-        – <b>🟢 AJUSTADO (&lt;2% y &lt;1 ATR)</b>: entrada cerca del soporte dinámico → tamaño normal.<br>
-        – <b>🟢 AJUSTADO (1–2 ATR)</b>: todavía razonable.<br>
-        – <b>🟡 HOLGADO (2–3 ATR)</b>: stop más lejano; tamaño prudente.<br>
-        – <b>🟠 LEJANO (&gt;3 ATR)</b>: entrada muy extendida → tamaño pequeño o esperar pullback antes de entrar.<br><br>
-        En general, evitar abrir grandes posiciones con stops muy lejanos aunque el score de entrada sea 100/100.
-      </p>
+      <p>&lt;1 ATR → normal · 1–2 ATR → prudente · 2–3 ATR → pequeño · &gt;3 ATR → esperar pullback</p>
 
-      <h3>7. Cómo interpretar la “Oportunidad global”</h3>
-      <p>
-        Además de la <b>Entrada técnica</b>, el sistema calcula una <b>Oportunidad global</b> (0–100) combinando:
-        entrada, calidad fundamental, precio/fundamentales, distancia al stop y volumen relativo.<br><br>
+      <h3>7. Oportunidad global</h3>
+      <p>100/100: señal fuerte + volumen + stop cercano + calidad + barata · A (85+) · B (70+) · C (55+) · D (&lt;55)</p>
 
-        – <b>100/100:</b> Caso ideal → señal de compra clara + volumen fuerte + stop cercano + empresa de calidad + barata.<br>
-        – <b>Oportunidad A (85–99):</b> Setup muy bueno, casi todo alineado.<br>
-        – <b>Oportunidad B (70–84):</b> Buen setup pero con alguna pega (valoración cara, stop no tan cercano, etc.).<br>
-        – <b>Oportunidad C (55–69):</b> Técnicamente interesante, pero fundamentalmente discutible (trade, no core).<br>
-        – <b>Oportunidad D (&lt;55):</b> Señal especulativa o con muchos “peros”; mejor evitar como posición principal.
-      </p>
-
-      <h3>8. Lectura de los fundamentales</h3>
-      <p>
-        El modelo separa claramente <b>Calidad del negocio</b> (0–100) y <b>Precio/Fundamentales</b> (0–100).<br><br>
-        – <b>Core de largo plazo:</b><br>
-        &nbsp;&nbsp;• Calidad ≥ 75 (“Muy buena” o “Excelente”).<br>
-        &nbsp;&nbsp;• Precio/Fund. ≥ 45 (“Razonable”, “Barata”, “Muy barata”).<br>
-        &nbsp;&nbsp;• Perfil: “🟢 Calidad con descuento” o “✅ Calidad razonable”.<br>
-        &nbsp;&nbsp;• Tendencia fundamental: “📈 Mejorando” o “➡️ Estable”.<br>
-        &nbsp;&nbsp;• Confianza A/B y sin red flags graves (Altman muy bajo, Beneish sospechoso, Deuda alta…).<br><br>
-
-        – <b>Value especulativo:</b><br>
-        &nbsp;&nbsp;• Calidad 50–65, Precio/Fund. alto (barata).<br>
-        &nbsp;&nbsp;• Perfil: “🟡 Value especulativo”.<br>
-        &nbsp;&nbsp;• Se puede jugar con buenas señales técnicas, pero con más disciplina de stop.<br><br>
-
-        – <b>Calidad cara:</b><br>
-        &nbsp;&nbsp;• Calidad alta (≥75) pero Precio/Fund. bajo (Cara/Muy cara).<br>
-        &nbsp;&nbsp;• Perfil: “💎 Calidad cara”.<br>
-        &nbsp;&nbsp;• Aptas para largo plazo, pero con menos margen de seguridad; mejor esperar correcciones si es posible.<br><br>
-
-        – <b>Débil y cara:</b><br>
-        &nbsp;&nbsp;• Calidad &lt;50 y Precio/Fund. bajo.<br>
-        &nbsp;&nbsp;• Perfil: “🔴 Débil y cara”.<br>
-        &nbsp;&nbsp;• En general a evitar como inversión; solo tienen sentido como trades técnicos de corto plazo muy controlados.
-      </p>
+      <h3>8. Fundamentales</h3>
+      <p>Calidad ≥ 75 + Val ≥ 45 → core largo plazo · Calidad &lt;50 + cara → solo trade táctico</p>
 
       <h3>9. Macro y divisa</h3>
-      <p>
-        – El panel macro puede estar en modo <b>🟢 FAVORABLE</b>, <b>🟡 NEUTRAL</b> o <b>🔴 CAUTELOSO</b>.<br>
-        – Si el macro está “🔴 CAUTELOSO”, las compras se consideran más frágiles y el sistema muestra un aviso en las señales de compra (“⚠️ Macro cautelosa”).<br>
-        – Para inversor en EUR, el panel EUR/USD indica si el cambio de divisa puede sumar o restar rentabilidad a las posiciones en USD.
-      </p>
+      <p>Macro 🔴 CAUTELOSO → compras más frágiles. EUR/USD fuerte → erosiona exposición USD.</p>
 
-      <p class="warning"><b>Aviso:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
+      <p class="warning"><b>Aviso:</b> herramienta mecánica. No es asesoramiento financiero.</p>
     </div>
   </section>
 
-  <div class="footer">
-    LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed.
-  </div>
+  <div class="footer">LCrack Sovereign · Datos vía yfinance/FRED/Fear &amp; Greed.</div>
 </div>
 
+<!-- ═══════════════════════════════════════════════ -->
+<!-- JAVASCRIPT                                      -->
+<!-- ═══════════════════════════════════════════════ -->
 <script>
+/* ── Globals ───────────────────────────────────── */
 let allAssets = [];
-let signals = [];
-let summary = {};
+let signals   = [];
+let summary   = {};
 let portfolio = JSON.parse(localStorage.getItem("sovereign_portfolio") || "[]");
 
+// Deep Dive chart instances (destroyed on reload)
+let _ddCharts = [];
+
+/* ── Utilidades ────────────────────────────────── */
 function fmtNum(x, d=2) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
   return Number(x).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d});
 }
-
 function fmtPct(x, d=1) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
-  return (Number(x) * 100).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d}) + "%";
+  return (Number(x)*100).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d})+"%";
 }
-
 function clsFor(text) {
-  text = String(text || "");
-  if (text.includes("COMPRA") || text.includes("ALCISTA") || text.includes("MANTENER") || text.includes("Baja")) return "buy";
-  if (text.includes("VENTA 100") || text.includes("BAJISTA") || text.includes("Salida fuerte") || text.includes("VENDER TODO")) return "sell";
-  if (text.includes("VENTA") || text.includes("LATERAL") || text.includes("REDUCIR") || text.includes("Reducir") || text.includes("STOP") || text.includes("Vigilar")) return "partial";
+  text = String(text||"");
+  if (text.includes("COMPRA")||text.includes("ALCISTA")||text.includes("MANTENER")||text.includes("Baja")) return "buy";
+  if (text.includes("VENTA 100")||text.includes("BAJISTA")||text.includes("Salida fuerte")||text.includes("VENDER TODO")) return "sell";
+  if (text.includes("VENTA")||text.includes("LATERAL")||text.includes("REDUCIR")||text.includes("Reducir")||text.includes("Vigilar")) return "partial";
   if (text.includes("MIXTA")) return "mixed";
   return "neutral";
 }
-
 function badge(text, cls="") {
-  return `<span class="badge ${cls || clsFor(text)}">${text || "—"}</span>`;
+  return `<span class="badge ${cls||clsFor(text)}">${text||"—"}</span>`;
 }
-
 function scoreBar(val, color="#3b82f6") {
-  if (val === null || val === undefined || Number.isNaN(Number(val))) return "";
-  const pct = Math.max(0, Math.min(100, Number(val)));
+  if (val===null||val===undefined||Number.isNaN(Number(val))) return "";
+  const pct = Math.max(0,Math.min(100,Number(val)));
   return `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%;background:${color}"></div></div>`;
 }
-
-function qualityColor(score) {
-  if (score === null || score === undefined || Number.isNaN(Number(score))) return "#64748b";
-  if (score >= 85) return "#86efac";
-  if (score >= 75) return "#4ade80";
-  if (score >= 65) return "#a3e635";
-  if (score >= 50) return "#fde68a";
-  return "#fca5a5";
-}
-
-function valuationColor(score) {
-  if (score === null || score === undefined || Number.isNaN(Number(score))) return "#64748b";
-  if (score >= 80) return "#86efac";
-  if (score >= 65) return "#4ade80";
-  if (score >= 45) return "#fde68a";
-  if (score >= 25) return "#fb923c";
-  return "#fca5a5";
-}
+function qualityColor(s)   { if(s>=85) return "#86efac"; if(s>=75) return "#4ade80"; if(s>=65) return "#a3e635"; if(s>=50) return "#fde68a"; return "#fca5a5"; }
+function valuationColor(s) { if(s>=80) return "#86efac"; if(s>=65) return "#4ade80"; if(s>=45) return "#fde68a"; if(s>=25) return "#fb923c"; return "#fca5a5"; }
 
 function showTab(id, ev) {
-  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
-  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".section").forEach(s=>s.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  if (ev && ev.target) ev.target.classList.add("active");
+  if (ev&&ev.target) ev.target.classList.add("active");
 }
 
+/* ── Data loading ──────────────────────────────── */
 async function loadData() {
-  allAssets = await fetch("data/all_assets.json").then(r => r.json());
-  signals = await fetch("data/signals.json").then(r => r.json());
-  summary = await fetch("data/summary.json").then(r => r.json());
-
+  allAssets = await fetch("data/all_assets.json").then(r=>r.json());
+  signals   = await fetch("data/signals.json").then(r=>r.json());
+  summary   = await fetch("data/summary.json").then(r=>r.json());
   renderSummary();
   renderGlobal();
   renderSignals();
   renderUniverse();
   renderPortfolio();
+  buildDeepDiveTickers();
 }
 
+/* ── Summary ───────────────────────────────────── */
 function renderSummary() {
   document.getElementById("subtitle").innerText =
-    `Última actualización: ${summary.generated_at || "—"} · Activos analizados: ${summary.total_assets || 0}`;
-
+    `Última actualización: ${summary.generated_at||"—"} · Activos analizados: ${summary.total_assets||0}`;
   const cards = [
-    ["🌍 Macro", summary.macro?.label || "—", `${summary.macro?.warning_text || "Score: " + fmtNum(summary.macro?.score, 1)}`],
-    ["💶 EUR/USD", summary.fx?.label || "—", summary.fx?.diag || "—"],
-    ["🎯 Señales", String(summary.total_signals || 0), `Compras: ${summary.buy_signals || 0} · Ventas: ${summary.sell_signals || 0}`],
-    ["⚙️ Parámetros", `${summary.config?.LOOKBACK_SIGNAL || 5} velas`, `PVI ${summary.config?.PVI_MA || 120} · RVOL ${summary.config?.RVOL_HIGH || 1.5}x`],
+    ["🌍 Macro", summary.macro?.label||"—", `${summary.macro?.warning_text||"Score: "+fmtNum(summary.macro?.score,1)}`],
+    ["💶 EUR/USD", summary.fx?.label||"—", summary.fx?.diag||"—"],
+    ["🎯 Señales", String(summary.total_signals||0), `Compras: ${summary.buy_signals||0} · Ventas: ${summary.sell_signals||0}`],
+    ["⚙️ Parámetros", `${summary.config?.LOOKBACK_SIGNAL||5} velas`, `PVI ${summary.config?.PVI_MA||120} · RVOL ${summary.config?.RVOL_HIGH||1.5}x`],
   ];
-
-  document.getElementById("summaryCards").innerHTML = cards.map(c => `
+  document.getElementById("summaryCards").innerHTML = cards.map(c=>`
     <div class="card">
       <div class="metric-title">${c[0]}</div>
       <div class="metric-big">${c[1]}</div>
       <div class="small">${c[2]}</div>
-    </div>
-  `).join("");
+    </div>`).join("");
 }
 
+/* ── Global ────────────────────────────────────── */
 function renderGlobal() {
-  const rows = (summary.macro?.rows || []).map(r => `
+  const rows = (summary.macro?.rows||[]).map(r=>`
     <tr>
       <td>${r.id}</td>
-      <td>${fmtNum(r.value, 2)}</td>
-      <td>${fmtPct(r.roc5, 1)}</td>
-      <td>${fmtPct(r.roc20, 1)}</td>
-      <td>${fmtNum(r.impact, 1)}</td>
-      <td>${r.diag || "—"}</td>
-    </tr>
-  `).join("");
-
+      <td>${fmtNum(r.value,2)}</td>
+      <td>${fmtPct(r.roc5,1)}</td>
+      <td>${fmtPct(r.roc20,1)}</td>
+      <td>${fmtNum(r.impact,1)}</td>
+      <td>${r.diag||"—"}</td>
+    </tr>`).join("");
   document.getElementById("macroTable").innerHTML = `
     <table>
-      <thead>
-        <tr>
-          <th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>
-  `;
-
-  const fx = summary.fx || {};
+    </table>`;
+  const fx = summary.fx||{};
   document.getElementById("fxBox").innerHTML = `
-    <p>${badge(fx.label || "—")}</p>
-    <p>${fx.diag || "—"}</p>
-    <table>
-      <tbody>
-        <tr><td>EUR/USD</td><td>${fmtNum(fx.eurusd, 4)}</td></tr>
-        <tr><td>ROC 5D</td><td>${fmtPct(fx.roc5, 2)}</td></tr>
-        <tr><td>ROC 20D</td><td>${fmtPct(fx.roc20, 2)}</td></tr>
-        <tr><td>SMA 50</td><td>${fmtNum(fx.sma50, 4)}</td></tr>
-        <tr><td>Score</td><td>${fmtNum(fx.score, 1)}</td></tr>
-      </tbody>
-    </table>
-  `;
+    <p>${badge(fx.label||"—")}</p><p>${fx.diag||"—"}</p>
+    <table><tbody>
+      <tr><td>EUR/USD</td><td>${fmtNum(fx.eurusd,4)}</td></tr>
+      <tr><td>ROC 5D</td><td>${fmtPct(fx.roc5,2)}</td></tr>
+      <tr><td>ROC 20D</td><td>${fmtPct(fx.roc20,2)}</td></tr>
+      <tr><td>SMA 50</td><td>${fmtNum(fx.sma50,4)}</td></tr>
+      <tr><td>Score</td><td>${fmtNum(fx.score,1)}</td></tr>
+    </tbody></table>`;
 }
 
+/* ── Blocks reutilizables ──────────────────────── */
 function fundBlock(a) {
-  const hasFund = a.has_fundamentals === true;
-
-  if (!hasFund) {
-    return `<div class="small">Sin fundamentales / técnico-only / datos insuficientes</div>`;
-  }
-
+  if (!a.has_fundamentals) return `<div class="small">Sin fundamentales</div>`;
   return `
     <div>
-      ${badge("Calidad " + fmtNum(a.quality_score,0) + " · " + (a.quality_label || "—"), "qbadge")}
-      ${badge("Precio/Fund. " + fmtNum(a.valuation_score,0) + " · " + (a.valuation_label || "—"), "vbadge")}
-      ${badge("Conf " + (a.confidence_grade || "—"), "neutral")}
-      ${badge(a.quality_q || "—", "qbadge")}
+      ${badge("Calidad "+fmtNum(a.quality_score,0)+" · "+(a.quality_label||"—"),"qbadge")}
+      ${badge("Precio/Fund. "+fmtNum(a.valuation_score,0)+" · "+(a.valuation_label||"—"),"vbadge")}
+      ${badge("Conf "+(a.confidence_grade||"—"),"neutral")}
+      ${badge(a.quality_q||"—","qbadge")}
     </div>
-
     ${scoreBar(a.quality_score, qualityColor(a.quality_score))}
     ${scoreBar(a.valuation_score, valuationColor(a.valuation_score))}
-
-    <div class="small">${a.fundamental_profile || "—"} · ${a.fundamental_trend || "—"}</div>
-
-    <div class="small">
-      Calidad: ${fmtNum(a.score_quality,0)} op ·
-      ${fmtNum(a.score_cash,0)} caja ·
-      ${fmtNum(a.score_solvency,0)} solv ·
-      ${fmtNum(a.score_growth,0)} crec ·
-      ${fmtNum(a.score_risk,0)} riesgo
-    </div>
-
-    <div class="small">
-      ROIC ${fmtPct(a.roic,1)} · ROE ${fmtPct(a.roe,1)} ·
-      FCF Yield ${fmtPct(a.fcf_yield,1)} ·
-      Altman ${fmtNum(a.altman_z,2)} ·
-      Piotroski ${fmtNum(a.piotroski,1)}
-    </div>
-
-    <div class="small">
-      P/E ${fmtNum(a.pe,1)} · P/B ${fmtNum(a.pb,2)} ·
-      EV/EBITDA ${fmtNum(a.ev_ebitda,1)} ·
-      ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)}
-    </div>
-
-    <div class="small">
-      ${a.fundamental_model || "—"} · ${a.period_label || "N/A"} · ${a.valuation_style || "—"}
-    </div>
-
-    ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-  `;
+    <div class="small">${a.fundamental_profile||"—"} · ${a.fundamental_trend||"—"}</div>
+    <div class="small">ROIC ${fmtPct(a.roic,1)} · ROE ${fmtPct(a.roe,1)} · FCF Yield ${fmtPct(a.fcf_yield,1)} · Altman ${fmtNum(a.altman_z,2)} · Piotroski ${fmtNum(a.piotroski,1)}</div>
+    <div class="small">P/E ${fmtNum(a.pe,1)} · P/B ${fmtNum(a.pb,2)} · EV/EBITDA ${fmtNum(a.ev_ebitda,1)} · ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)}</div>
+    ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}`;
 }
-
 function techBlock(a) {
-  const macroWarn = summary.macro?.warning && String(a.main_signal || "").includes("COMPRA")
-    ? badge("⚠️ Macro cautelosa", "warnbadge")
-    : "";
-
+  const macroWarn = summary.macro?.warning && String(a.main_signal||"").includes("COMPRA")
+    ? badge("⚠️ Macro cautelosa","warnbadge") : "";
   const volBlocked = a.raw_buy_blocked_by_vol
-    ? `<div class="small warning">⚠️ Señal de compra bloqueada por volumen insuficiente</div>`
-    : "";
-
+    ? `<div class="small warning">⚠️ Señal bloqueada por volumen</div>` : "";
   return `
-    <div>
-      ${badge(a.technical_state || "—")}
-      ${badge(a.signal_freshness || "—", "neutral")}
-      ${macroWarn}
+    <div>${badge(a.technical_state||"—")} ${badge(a.signal_freshness||"—","neutral")} ${macroWarn}</div>
+    <div class="small"><b>Entrada:</b> ${a.entry_quality_label||"—"} ${a.entry_quality_score!=null?" · "+fmtNum(a.entry_quality_score,0)+"/100":""}</div>
+    <div class="small"><b>Oportunidad:</b> ${a.opportunity_label||"—"} ${a.opportunity_score!=null?" · "+fmtNum(a.opportunity_score,0)+"/100":""}</div>
+    <div class="small">${a.entry_quality_notes||""}</div>
+    <div class="small">Salida: <b>${a.exit_pressure_label||"—"}</b> · ${fmtNum(a.exit_pressure_score,0)}/100</div>
+    <div class="small">${a.exit_pressure_notes||""}</div>
+    <div class="small">PVI ${a.pvi_status||"—"} · Gap ${fmtPct(a.pvi_gap,2)} · RVOL ${fmtNum(a.rvol,2)}x
+      ${a.bullish_high_volume?" · 🟢 Vol. alto alcista":""}
+      ${a.bearish_high_volume?" · 🔴 Vol. alto bajista":""}
     </div>
-
-    <div class="small">
-      <b>Entrada técnica:</b> ${a.entry_quality_label || "—"}
-      ${a.entry_quality_score !== null && a.entry_quality_score !== undefined ? " · " + fmtNum(a.entry_quality_score,0) + "/100" : ""}
-    </div>
-
-    <div class="small">
-      <b>Oportunidad global:</b> ${a.opportunity_label || "—"}
-      ${a.opportunity_score !== null && a.opportunity_score !== undefined ? " · " + fmtNum(a.opportunity_score,0) + "/100" : ""}
-    </div>
-
-    <div class="small">
-      ${a.entry_quality_notes || ""}
-    </div>
-
-    <div class="small">
-      Salida: <b>${a.exit_pressure_label || "—"}</b> · ${fmtNum(a.exit_pressure_score,0)}/100
-    </div>
-
-    <div class="small">
-      ${a.exit_pressure_notes || ""}
-    </div>
-
-    <div class="small">
-      PVI ${a.pvi_status || "—"} · Gap ${fmtPct(a.pvi_gap,2)} ·
-      RVOL ${fmtNum(a.rvol,2)}x
-      ${a.bullish_high_volume ? " · 🟢 Vol. alcista alto" : ""}
-      ${a.bearish_high_volume ? " · 🔴 Vol. bajista alto" : ""}
-    </div>
-
-    <div class="small">
-      Dist McG ${fmtPct(a.dist_to_mcg_exit,1)} ·
-      ATR ${fmtNum(a.dist_to_mcg_exit_atr,2)}x ·
-      CHOP ${fmtNum(a.chop,1)}<br>
-      Stop: ${a.stop_status || "—"}
-    </div>
-
-    ${a.volume_quality === false ? `<div class="small warning">⚠️ ${a.volume_warning || "Volumen dudoso"}</div>` : ""}
-    ${volBlocked}
-  `;
+    <div class="small">Dist McG ${fmtPct(a.dist_to_mcg_exit,1)} · ATR ${fmtNum(a.dist_to_mcg_exit_atr,2)}x · CHOP ${fmtNum(a.chop,1)}<br>Stop: ${a.stop_status||"—"}</div>
+    ${a.volume_quality===false ? `<div class="small warning">⚠️ ${a.volume_warning||"Volumen dudoso"}</div>` : ""}
+    ${volBlocked}`;
 }
 
+/* ── Señales ───────────────────────────────────── */
 function signalRow(a) {
-  return `
-    <tr>
-      <td>
-        <div class="ticker">${a.ticker}</div>
-        <div class="name">${a.name || "—"}</div>
-      </td>
-      <td>${badge(a.main_signal)}<div class="small">${a.events_text || ""}</div></td>
-      <td>${badge(a.regime)}<div class="small">Cruces: ${a.recent_crosses ?? "—"}</div></td>
-      <td>${techBlock(a)}</td>
-      <td>${fundBlock(a)}</td>
-      <td>${a.bucket || "—"}</td>
-    </tr>
-  `;
+  return `<tr>
+    <td><div class="ticker">${a.ticker}</div><div class="name">${a.name||"—"}</div></td>
+    <td>${badge(a.main_signal)}<div class="small">${a.events_text||""}</div></td>
+    <td>${badge(a.regime)}<div class="small">Cruces: ${a.recent_crosses??"—"}</div></td>
+    <td>${techBlock(a)}</td>
+    <td>${fundBlock(a)}</td>
+    <td>${a.bucket||"—"}</td>
+  </tr>`;
+}
+function renderSignals() {
+  const q      = (document.getElementById("signalSearch")?.value||"").toUpperCase();
+  const type   = document.getElementById("signalType")?.value||"";
+  const regime = document.getElementById("signalRegime")?.value||"";
+  let data = signals.slice();
+  if (q)      data = data.filter(a=>String(a.ticker).toUpperCase().includes(q)||String(a.name).toUpperCase().includes(q));
+  if (type)   data = data.filter(a=>String(a.main_signal||"").includes(type));
+  if (regime) data = data.filter(a=>String(a.regime||"").includes(regime));
+  if (!data.length) { document.getElementById("signalsTable").innerHTML=`<p class="small">No hay señales.</p>`; return; }
+  document.getElementById("signalsTable").innerHTML = `
+    <table><thead><tr><th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico</th><th>Fundamental</th><th>Universo</th></tr></thead>
+    <tbody>${data.map(signalRow).join("")}</tbody></table>`;
 }
 
-function renderSignals() {
-  const q = (document.getElementById("signalSearch")?.value || "").toUpperCase();
-  const type = document.getElementById("signalType")?.value || "";
-  const regime = document.getElementById("signalRegime")?.value || "";
+/* ── Universo ──────────────────────────────────── */
+function confidenceValue(c) { if(c==="A")return 3; if(c==="B")return 2; if(c==="C")return 1; return 0; }
+function renderUniverse() {
+  const q       = (document.getElementById("universeSearch")?.value||"").toUpperCase();
+  const regime  = document.getElementById("universeRegime")?.value||"";
+  const confF   = document.getElementById("fundConfidenceFilter")?.value||"";
+  const qualMin = document.getElementById("fundQualityFilter")?.value;
+  const valMin  = document.getElementById("fundValuationFilter")?.value;
+  const entMin  = document.getElementById("entryQualityFilter")?.value;
+  const exitMin = document.getElementById("exitPressureFilter")?.value;
+  const qFilt   = document.getElementById("fundQFilter")?.value||"";
+  const onlyF   = document.getElementById("onlyFundamentals")?.checked||false;
+  let data = allAssets.slice();
+  if (q)      data=data.filter(a=>String(a.ticker).toUpperCase().includes(q)||String(a.name).toUpperCase().includes(q)||String(a.sector||"").toUpperCase().includes(q)||String(a.industry||"").toUpperCase().includes(q));
+  if (regime) data=data.filter(a=>String(a.regime||"").includes(regime));
+  if (onlyF)  data=data.filter(a=>a.has_fundamentals===true);
+  if (confF)  data=data.filter(a=>confidenceValue(a.confidence_grade)>=confidenceValue(confF));
+  if (qualMin)data=data.filter(a=>Number(a.quality_score)>=Number(qualMin));
+  if (valMin) data=data.filter(a=>Number(a.valuation_score)>=Number(valMin));
+  if (entMin) data=data.filter(a=>Number(a.entry_quality_score)>=Number(entMin));
+  if (exitMin)data=data.filter(a=>Number(a.exit_pressure_score)>=Number(exitMin));
+  if (qFilt)  data=data.filter(a=>String(a.quality_q||"")===qFilt);
+  data=data.sort((a,b)=>{
+    const fa=a.quality_score==null?-1:Number(a.quality_score);
+    const fb=b.quality_score==null?-1:Number(b.quality_score);
+    return fb!==fa ? fb-fa : String(a.ticker).localeCompare(String(b.ticker));
+  });
+  const rows=data.map(a=>`<tr>
+    <td><div class="ticker">${a.ticker}</div><div class="name">${a.name||"—"}</div></td>
+    <td>${badge(a.main_signal||"—")}</td>
+    <td>${badge(a.regime||"—")}<div class="small">${a.technical_state||"—"}</div></td>
+    <td>${fmtNum(a.close,2)}</td>
+    <td>${techBlock(a)}</td>
+    <td>${fundBlock(a)}</td>
+    <td>${a.bucket||"—"}</td>
+  </tr>`).join("");
+  document.getElementById("universeTable").innerHTML=`
+    <table><thead><tr><th>Activo</th><th>Señal</th><th>Régimen</th><th>Precio</th><th>Técnico</th><th>Fundamental</th><th>Universo</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
 
-  let data = signals.slice();
+/* ════════════════════════════════════════════════
+   DEEP DIVE
+════════════════════════════════════════════════ */
 
-  if (q) {
-    data = data.filter(a =>
-      String(a.ticker).toUpperCase().includes(q) ||
-      String(a.name).toUpperCase().includes(q)
-    );
-  }
+function buildDeepDiveTickers() {
+  // Atajos rápidos: tickers con señal activa primero, luego el resto
+  const withSignal = allAssets.filter(a=>a.has_signal).map(a=>a.ticker);
+  const rest       = allAssets.filter(a=>!a.has_signal).map(a=>a.ticker);
+  const all        = [...withSignal, ...rest];
 
-  if (type) {
-    data = data.filter(a => String(a.main_signal || "").includes(type));
-  }
+  const el = document.getElementById("dd-ticker-list");
+  el.innerHTML = all.slice(0, 40).map(t => {
+    const a   = allAssets.find(x=>x.ticker===t);
+    const cls = a?.has_signal ? "primary" : "";
+    return `<button class="${cls}" onclick="setAndLoad('${t}')">${t}</button>`;
+  }).join("") + (all.length>40 ? `<span class="small"> …y ${all.length-40} más</span>` : "");
+}
 
-  if (regime) {
-    data = data.filter(a => String(a.regime || "").includes(regime));
-  }
+function setAndLoad(ticker) {
+  document.getElementById("dd-ticker-input").value = ticker;
+  loadDeepDive();
+}
 
-  if (!data.length) {
-    document.getElementById("signalsTable").innerHTML = `<p class="small">No hay señales con esos filtros.</p>`;
+async function loadDeepDive() {
+  const ticker = document.getElementById("dd-ticker-input").value.trim().toUpperCase();
+  if (!ticker) return;
+
+  const loading = document.getElementById("dd-loading");
+  const body    = document.getElementById("dd-body");
+  loading.innerText = `⏳ Cargando datos de ${ticker}…`;
+  body.style.display = "none";
+
+  // Destruir charts anteriores
+  _ddCharts.forEach(c => { try { c.remove(); } catch(e){} });
+  _ddCharts = [];
+
+  let data;
+  try {
+    data = await fetch(`data/tickers/${ticker}.json`).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+  } catch(e) {
+    loading.innerText = `❌ No se encontraron datos para "${ticker}". Asegúrate de que está en el universo y se ha generado el JSON.`;
     return;
   }
 
-  document.getElementById("signalsTable").innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico avanzado</th><th>Fundamental</th><th>Universo</th>
-        </tr>
-      </thead>
-      <tbody>${data.map(signalRow).join("")}</tbody>
-    </table>
-  `;
+  loading.innerText = "";
+  body.style.display = "block";
+
+  renderDeepHeader(data);
+  renderDeepSignalCards(data);
+  renderDeepChartPrice(data);
+  renderDeepChartPVI(data);
+  renderDeepChartRVOL(data);
+  renderDeepChartDist(data);
+  renderDeepTechKV(data);
+  renderDeepFundamentals(data);
 }
 
-function confidenceValue(c) {
-  if (c === "A") return 3;
-  if (c === "B") return 2;
-  if (c === "C") return 1;
-  return 0;
+/* ── Cabecera ─────────────────────────────────── */
+function renderDeepHeader(d) {
+  const t = d.technical || {};
+  document.getElementById("dd-asset-header").innerHTML = `
+    <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:32px;font-weight:950">${d.ticker}</div>
+        <div style="color:var(--muted);font-size:14px">${d.name||""} · ${d.bucket||""} · ${d.sector||""} · ${d.currency||""}</div>
+        <div class="small">Último dato: ${d.last_date||"—"}</div>
+      </div>
+      <div>
+        ${badge(t.main_signal||"—")}
+        ${badge(t.regime||"—")}
+        ${badge(t.signal_freshness||"—","neutral")}
+        ${badge(t.technical_state||"—")}
+      </div>
+      <div>
+        <div style="font-size:28px;font-weight:950;color:var(--blue)">${fmtNum(t.close,2)} ${d.currency||""}</div>
+        <div class="small">McG Régimen ${fmtNum(t.mcg_regime,2)} · McG Salida ${fmtNum(t.mcg_exit,2)}</div>
+      </div>
+    </div>`;
 }
 
-function renderUniverse() {
-  const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
-  const regime = document.getElementById("universeRegime")?.value || "";
-  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
-  const qualMin = document.getElementById("fundQualityFilter")?.value;
-  const valMin = document.getElementById("fundValuationFilter")?.value;
-  const entryMin = document.getElementById("entryQualityFilter")?.value;
-  const exitMin = document.getElementById("exitPressureFilter")?.value;
-  const qFilter = document.getElementById("fundQFilter")?.value || "";
-  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
+/* ── Tarjetas de señal ────────────────────────── */
+function renderDeepSignalCards(d) {
+  const t = d.technical || {};
 
-  let data = allAssets.slice();
+  const cards = [
+    {
+      title: "🎯 Señal principal",
+      value: t.main_signal || "—",
+      sub:   t.events_text || "Sin eventos recientes",
+      color: t.main_signal?.includes("COMPRA") ? "#22c55e" : t.main_signal?.includes("VENTA") ? "#ef4444" : "#94a3b8"
+    },
+    {
+      title: "⏱️ Frescura · Velas desde cruce",
+      value: t.signal_freshness || "—",
+      sub:   [
+        t.buy_ago     != null ? `Compra: hace ${t.buy_ago} velas`     : null,
+        t.pvi_sell_ago!= null ? `Venta PVI: hace ${t.pvi_sell_ago} velas` : null,
+        t.mcg_sell_ago!= null ? `Venta McG: hace ${t.mcg_sell_ago} velas` : null,
+      ].filter(Boolean).join(" · ") || "—",
+      color: "#60a5fa"
+    },
+    {
+      title: "📐 Calidad de entrada",
+      value: t.entry_quality_score != null ? fmtNum(t.entry_quality_score,0)+"/100" : "—",
+      sub:   t.entry_quality_label || "—",
+      bar:   t.entry_quality_score,
+      barColor: qualityColor(t.entry_quality_score),
+    },
+    {
+      title: "🚦 Oportunidad global",
+      value: t.opportunity_score != null ? fmtNum(t.opportunity_score,0)+"/100" : "—",
+      sub:   t.opportunity_label || "—",
+      bar:   t.opportunity_score,
+      barColor: qualityColor(t.opportunity_score),
+    },
+    {
+      title: "🚨 Presión de salida",
+      value: t.exit_pressure_score != null ? fmtNum(t.exit_pressure_score,0)+"/100" : "—",
+      sub:   t.exit_pressure_label || "—",
+      bar:   t.exit_pressure_score,
+      barColor: t.exit_pressure_score>=75?"#ef4444":t.exit_pressure_score>=50?"#f97316":t.exit_pressure_score>=25?"#fde68a":"#22c55e",
+    },
+    {
+      title: "🛑 Estado stop",
+      value: t.stop_status || "—",
+      sub:   `Dist ${fmtPct(t.dist_to_mcg_exit,1)} · ${fmtNum(t.dist_to_mcg_exit_atr,2)} ATR`,
+      color: "#a78bfa"
+    },
+    {
+      title: "🔵 PVI",
+      value: t.pvi_status || "—",
+      sub:   `Gap ${fmtPct(t.pvi_gap,2)} · PVI ${fmtNum(t.pvi,2)} · Señal ${fmtNum(t.pvi_signal,2)}`,
+      color: t.pvi_status==="POSITIVO"?"#22c55e":"#ef4444"
+    },
+    {
+      title: "📊 RVOL · CHOP · ATR",
+      value: `${fmtNum(t.rvol,2)}x`,
+      sub:   `CHOP ${fmtNum(t.chop,1)} · ATR ${fmtNum(t.atr,2)} ${d.currency||""}`,
+      color: t.rvol>=1.5?"#22c55e":"#94a3b8"
+    },
+  ];
 
-  if (q) {
-    data = data.filter(a =>
-      String(a.ticker).toUpperCase().includes(q) ||
-      String(a.name).toUpperCase().includes(q) ||
-      String(a.sector || "").toUpperCase().includes(q) ||
-      String(a.industry || "").toUpperCase().includes(q)
-    );
+  document.getElementById("dd-signal-cards").innerHTML = cards.map(c=>`
+    <div class="card" style="border-left:3px solid ${c.color||"#334155"}">
+      <div class="kv-label">${c.title}</div>
+      <div class="metric-val" style="color:${c.color||"var(--text)"}">${c.value}</div>
+      ${c.bar != null ? scoreBar(c.bar, c.barColor||"#3b82f6") : ""}
+      <div class="small" style="margin-top:6px">${c.sub}</div>
+    </div>`).join("");
+
+  // Timeline de notas
+  document.getElementById("dd-signal-timeline").innerHTML = [
+    t.entry_quality_notes ? `<span class="badge neutral">📋 Entrada: ${t.entry_quality_notes}</span>` : "",
+    t.exit_pressure_notes ? `<span class="badge neutral">🚨 Salida: ${t.exit_pressure_notes}</span>`  : "",
+    t.volume_warning       ? `<span class="badge warnbadge">⚠️ ${t.volume_warning}</span>`             : "",
+    summary.macro?.warning && String(t.main_signal||"").includes("COMPRA")
+      ? `<span class="badge warnbadge">⚠️ Macro cautelosa</span>` : "",
+  ].filter(Boolean).join("");
+}
+
+/* ── Helpers de chart ─────────────────────────── */
+const DD_CHART_OPTIONS = (height=400) => ({
+  width:  0,   // autosize
+  height: height,
+  layout: { background:{color:"#0f172a"}, textColor:"#94a3b8" },
+  grid:   { vertLines:{color:"rgba(148,163,184,.08)"}, horzLines:{color:"rgba(148,163,184,.08)"} },
+  crosshair: { mode: 1 },
+  rightPriceScale: { borderColor:"rgba(148,163,184,.2)" },
+  timeScale: { borderColor:"rgba(148,163,184,.2)", timeVisible:true, secondsVisible:false },
+  handleScroll: true,
+  handleScale:  true,
+});
+
+function newChart(containerId, height) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = "";
+  const chart = LightweightCharts.createChart(el, DD_CHART_OPTIONS(height));
+  chart.applyOptions({ width: el.clientWidth });
+  new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(el);
+  _ddCharts.push(chart);
+  return chart;
+}
+
+/* ── Gráfico de precio ────────────────────────── */
+function renderDeepChartPrice(d) {
+  const chart = newChart("dd-chart-price", 400);
+
+  // Velas
+  const candleSeries = chart.addCandlestickSeries({
+    upColor:"#22c55e", downColor:"#ef4444",
+    borderUpColor:"#22c55e", borderDownColor:"#ef4444",
+    wickUpColor:"#22c55e", wickDownColor:"#ef4444",
+  });
+  const validCandles = (d.candles||[]).filter(c=>
+    isFinite(c.open)&&isFinite(c.high)&&isFinite(c.low)&&isFinite(c.close)
+  );
+  candleSeries.setData(validCandles);
+
+  // Volumen en el fondo (histograma escale separada)
+  const volSeries = chart.addHistogramSeries({
+    color:"rgba(148,163,184,.18)",
+    priceFormat:{type:"volume"},
+    priceScaleId:"vol",
+  });
+  chart.priceScale("vol").applyOptions({ scaleMargins:{top:0.85, bottom:0} });
+  volSeries.setData((d.candles||[]).map(c=>({time:c.time, value:c.volume, color:c.close>=c.open?"rgba(34,197,94,.25)":"rgba(239,68,68,.25)"})));
+
+  // McGinley Régimen
+  const mcgReg = chart.addLineSeries({ color:"#3b82f6", lineWidth:2, title:"McG Reg" });
+  mcgReg.setData(d.mcg_regime||[]);
+
+  // McGinley Salida
+  const mcgExit = chart.addLineSeries({ color:"#f97316", lineWidth:2, lineStyle:1, title:"McG Exit" });
+  mcgExit.setData(d.mcg_exit||[]);
+
+  // Marcadores de señal
+  const markerMap = { buy:"#22c55e", sell_pvi:"#ef4444", sell_mcg:"#f97316" };
+  const markers = (d.markers||[]).map(m=>({
+    time: m.time,
+    position: m.position,
+    color: markerMap[m.type]||"#94a3b8",
+    shape: m.shape,
+    text: m.type==="buy"?"B":m.type==="sell_pvi"?"VP":"VM",
+    size: 1,
+  }));
+  candleSeries.setMarkers(markers);
+
+  chart.timeScale().fitContent();
+}
+
+/* ── Gráfico PVI ──────────────────────────────── */
+function renderDeepChartPVI(d) {
+  const chart = newChart("dd-chart-pvi", 180);
+
+  const pviSeries = chart.addLineSeries({ color:"#60a5fa", lineWidth:2, title:"PVI" });
+  pviSeries.setData(d.pvi||[]);
+
+  const sigSeries = chart.addLineSeries({ color:"#f59e0b", lineWidth:2, lineStyle:2, title:"PVI Señal" });
+  sigSeries.setData(d.pvi_signal||[]);
+
+  // Marcadores de cruce en PVI
+  const buyMarkers  = (d.markers||[]).filter(m=>m.type==="buy").map(m=>({time:m.time,position:"belowBar",color:"#22c55e",shape:"arrowUp",size:1}));
+  const sellMarkers = (d.markers||[]).filter(m=>m.type==="sell_pvi").map(m=>({time:m.time,position:"aboveBar",color:"#ef4444",shape:"arrowDown",size:1}));
+  pviSeries.setMarkers([...buyMarkers,...sellMarkers].sort((a,b)=>a.time>b.time?1:-1));
+
+  chart.timeScale().fitContent();
+}
+
+/* ── Gráfico RVOL ─────────────────────────────── */
+function renderDeepChartRVOL(d) {
+  const chart = newChart("dd-chart-rvol", 140);
+
+  const rvol = chart.addHistogramSeries({ title:"RVOL" });
+  rvol.setData((d.rvol||[]).map(v=>({
+    time:  v.time,
+    value: v.value,
+    color: v.value >= 1.5 ? "rgba(34,197,94,.7)" : v.value >= 1.0 ? "rgba(148,163,184,.5)" : "rgba(148,163,184,.25)"
+  })));
+
+  // Línea de umbral 1.5x
+  const line = chart.addLineSeries({ color:"#f97316", lineWidth:1, lineStyle:2, title:"1.5x" });
+  const threshold = (d.rvol||[]).map(v=>({time:v.time,value:1.5}));
+  line.setData(threshold);
+
+  // Línea 1.0x
+  const line1 = chart.addLineSeries({ color:"rgba(148,163,184,.4)", lineWidth:1, lineStyle:3, title:"1.0x" });
+  line1.setData((d.rvol||[]).map(v=>({time:v.time,value:1.0})));
+
+  chart.timeScale().fitContent();
+}
+
+/* ── Gráfico distancia McG ────────────────────── */
+function renderDeepChartDist(d) {
+  const chart = newChart("dd-chart-dist", 140);
+
+  const dist = chart.addHistogramSeries({ title:"Dist %" });
+  dist.setData((d.dist_mcg_exit||[]).map(v=>({
+    time:  v.time,
+    value: v.value,
+    color: v.value >= 0 ? "rgba(34,197,94,.55)" : "rgba(239,68,68,.55)"
+  })));
+
+  // Línea cero
+  const zero = chart.addLineSeries({ color:"rgba(148,163,184,.4)", lineWidth:1, lineStyle:2 });
+  zero.setData((d.dist_mcg_exit||[]).map(v=>({time:v.time, value:0})));
+
+  chart.timeScale().fitContent();
+}
+
+/* ── KV técnico snapshot ──────────────────────── */
+function renderDeepTechKV(d) {
+  const t = d.technical || {};
+  const items = [
+    ["Precio",          fmtNum(t.close,2)+" "+(d.currency||"")],
+    ["McG Régimen",     fmtNum(t.mcg_regime,2)],
+    ["McG Salida",      fmtNum(t.mcg_exit,2)],
+    ["ATR",             fmtNum(t.atr,4)],
+    ["CHOP",            fmtNum(t.chop,1)],
+    ["RVOL",            fmtNum(t.rvol,2)+"x"],
+    ["PVI",             fmtNum(t.pvi,2)],
+    ["PVI Señal",       fmtNum(t.pvi_signal,2)],
+    ["PVI Gap",         fmtPct(t.pvi_gap,2)],
+    ["PVI Estado",      t.pvi_status||"—"],
+    ["Dist McG %",      fmtPct(t.dist_to_mcg_exit,2)],
+    ["Dist McG ATR",    fmtNum(t.dist_to_mcg_exit_atr,2)+"x"],
+    ["Régimen",         t.regime||"—"],
+    ["Cruces laterales",String(t.recent_crosses??"—")],
+    ["Vol calidad",     t.volume_quality?"✅":"⚠️"],
+    ["Vol 0 días",      String(t.volume_zero_days??"—")],
+    ["RVOL alto",       t.rvol_high?"✅":"—"],
+    ["Vol alcista",     t.bullish_high_volume?"🟢":"—"],
+    ["Vol bajista",     t.bearish_high_volume?"🔴":"—"],
+    ["Señal tipo",      t.main_signal||"—"],
+    ["Compra hace",     t.buy_ago!=null?t.buy_ago+" velas":"—"],
+    ["Venta PVI hace",  t.pvi_sell_ago!=null?t.pvi_sell_ago+" velas":"—"],
+    ["Venta McG hace",  t.mcg_sell_ago!=null?t.mcg_sell_ago+" velas":"—"],
+    ["Stop",            t.stop_status||"—"],
+    ["Última vela",     d.last_date||"—"],
+  ];
+  document.getElementById("dd-tech-kv").innerHTML = items.map(([k,v])=>`
+    <div class="kv-item">
+      <div class="kv-label">${k}</div>
+      <div class="kv-value">${v}</div>
+    </div>`).join("");
+}
+
+/* ── Fundamentales ────────────────────────────── */
+function renderDeepFundamentals(d) {
+  const el = document.getElementById("dd-fund-section");
+
+  if (!d.fundamental) {
+    el.innerHTML = `
+      <div class="dd-section-title">🧬 Fundamentales</div>
+      <div class="small" style="padding:12px 0">
+        Sin datos fundamentales para este activo (técnico-only, cripto, commodity o confianza insuficiente).
+      </div>`;
+    return;
   }
 
-  if (regime) data = data.filter(a => String(a.regime || "").includes(regime));
-  if (onlyFund) data = data.filter(a => a.has_fundamentals === true);
-  if (confFilter) data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
-  if (qualMin) data = data.filter(a => Number(a.quality_score) >= Number(qualMin));
-  if (valMin) data = data.filter(a => Number(a.valuation_score) >= Number(valMin));
-  if (entryMin) data = data.filter(a => Number(a.entry_quality_score) >= Number(entryMin));
-  if (exitMin) data = data.filter(a => Number(a.exit_pressure_score) >= Number(exitMin));
-  if (qFilter) data = data.filter(a => String(a.quality_q || "") === qFilter);
+  const f = d.fundamental;
 
-  data = data.sort((a,b) => {
-    const fa = a.quality_score === null || a.quality_score === undefined ? -1 : Number(a.quality_score);
-    const fb = b.quality_score === null || b.quality_score === undefined ? -1 : Number(b.quality_score);
-    if (fb !== fa) return fb - fa;
-    return String(a.ticker).localeCompare(String(b.ticker));
-  });
+  el.innerHTML = `
+    <div class="dd-section-title">🧬 Fundamentales · ${f.fundamental_model||"—"} · ${f.period_label||"N/A"} · ${f.reporting_frequency||""} · Conf ${f.confidence_grade||"—"}</div>
 
-  const rows = data.map(a => `
-    <tr>
-      <td>
-        <div class="ticker">${a.ticker}</div>
-        <div class="name">${a.name || "—"}</div>
-      </td>
-      <td>${badge(a.main_signal || "—")}</td>
-      <td>${badge(a.regime || "—")}<div class="small">${a.technical_state || "—"}</div></td>
-      <td>${fmtNum(a.close,2)}</td>
-      <td>${techBlock(a)}</td>
-      <td>${fundBlock(a)}</td>
-      <td>${a.bucket || "—"}</td>
-    </tr>
-  `).join("");
+    <!-- Scores -->
+    <div class="grid4" style="margin-bottom:14px">
+      <div class="card">
+        <div class="kv-label">Calidad del negocio</div>
+        <div class="metric-val" style="color:${qualityColor(f.quality_score)}">${fmtNum(f.quality_score,0)}/100</div>
+        ${scoreBar(f.quality_score, qualityColor(f.quality_score))}
+        <div class="small">${f.quality_label||"—"}</div>
+      </div>
+      <div class="card">
+        <div class="kv-label">Precio / Fundamentales</div>
+        <div class="metric-val" style="color:${valuationColor(f.valuation_score)}">${fmtNum(f.valuation_score,0)}/100</div>
+        ${scoreBar(f.valuation_score, valuationColor(f.valuation_score))}
+        <div class="small">${f.valuation_label||"—"}</div>
+      </div>
+      <div class="card">
+        <div class="kv-label">Perfil fundamental</div>
+        <div class="metric-val">${f.fundamental_profile||"—"}</div>
+        <div class="small">${f.fundamental_trend||"—"}</div>
+      </div>
+      <div class="card">
+        <div class="kv-label">Confianza datos</div>
+        <div class="metric-val">${f.confidence_grade||"—"} · ${fmtNum(f.confidence_score,0)}/100</div>
+        <div class="small">${f.available_fields||"?"} / ${f.expected_fields||"?"} campos · ${f.latest_report_date||"—"}</div>
+      </div>
+    </div>
 
-  document.getElementById("universeTable").innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Activo</th>
-          <th>Señal</th>
-          <th>Régimen</th>
-          <th>Precio</th>
-          <th>Técnico avanzado</th>
-          <th>Fundamental</th>
-          <th>Universo</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <!-- Sub-scores -->
+    <div class="dd-section-title">📊 Sub-scores de calidad</div>
+    <div class="grid4" style="margin-bottom:14px">
+      ${[
+        ["Calidad operativa", f.score_quality],
+        ["Generación de caja",f.score_cash],
+        ["Solvencia",          f.score_solvency],
+        ["Crecimiento",        f.score_growth],
+        ["Riesgo/Banderas",    f.score_risk],
+        ["Valoración",         f.score_valuation],
+      ].map(([k,v])=>`
+        <div class="kv-item">
+          <div class="kv-label">${k}</div>
+          <div class="kv-value">${fmtNum(v,0)}</div>
+          ${scoreBar(v, qualityColor(v))}
+        </div>`).join("")}
+    </div>
+
+    <!-- P&L y métricas clave -->
+    <div class="dd-section-title">💰 P&amp;L TTM</div>
+    <div class="kv-grid" style="margin-bottom:14px">
+      ${[
+        ["Revenue TTM",     fmtNum((f.revenue_ttm||0)/1e9,2)+"B"],
+        ["Gross Profit",    fmtNum((f.gross_profit_ttm||0)/1e9,2)+"B"],
+        ["Op. Income",      fmtNum((f.op_income_ttm||0)/1e9,2)+"B"],
+        ["Net Income",      fmtNum((f.net_income_ttm||0)/1e9,2)+"B"],
+        ["CFO",             fmtNum((f.cfo_ttm||0)/1e9,2)+"B"],
+        ["CapEx",           fmtNum((f.capex_ttm||0)/1e9,2)+"B"],
+        ["FCF",             fmtNum((f.fcf_ttm||0)/1e9,2)+"B"],
+        ["Rev Growth",      fmtPct(f.revenue_growth,1)],
+        ["Op Income Growth",fmtPct(f.op_income_growth,1)],
+        ["Net Inc Growth",  fmtPct(f.net_income_growth,1)],
+        ["Shares Growth",   fmtPct(f.shares_growth,2)],
+        ["Market Cap",      fmtNum((f.market_cap||0)/1e9,2)+"B"],
+      ].map(([k,v])=>`<div class="kv-item"><div class="kv-label">${k}</div><div class="kv-value">${v}</div></div>`).join("")}
+    </div>
+
+    <!-- Balance -->
+    <div class="dd-section-title">🏦 Balance</div>
+    <div class="kv-grid" style="margin-bottom:14px">
+      ${[
+        ["Total Assets",   fmtNum((f.total_assets||0)/1e9,2)+"B"],
+        ["Total Liab.",    fmtNum((f.total_liabilities||0)/1e9,2)+"B"],
+        ["Equity",         fmtNum((f.equity||0)/1e9,2)+"B"],
+        ["Total Debt",     fmtNum((f.total_debt||0)/1e9,2)+"B"],
+        ["Cash",           fmtNum((f.cash||0)/1e9,2)+"B"],
+        ["ND/EBITDA",      fmtNum(f.net_debt_ebitda,2)+"x"],
+        ["Current Ratio",  fmtNum(f.current_ratio,2)+"x"],
+        ["Int. Coverage",  fmtNum(f.interest_coverage,1)+"x"],
+        ["Debt/Equity",    fmtNum(f.debt_equity,2)+"x"],
+        ["Equity/Assets",  fmtPct(f.equity_assets,1)],
+      ].map(([k,v])=>`<div class="kv-item"><div class="kv-label">${k}</div><div class="kv-value">${v}</div></div>`).join("")}
+    </div>
+
+    <!-- Rentabilidad y márgenes -->
+    <div class="dd-section-title">📈 Rentabilidad y márgenes</div>
+    <div class="kv-grid" style="margin-bottom:14px">
+      ${[
+        ["ROIC",       fmtPct(f.roic,1)],
+        ["ROE",        fmtPct(f.roe,1)],
+        ["ROA",        fmtPct(f.roa,1)],
+        ["Gross Mgn",  fmtPct(f.gross_margin,1)],
+        ["Op Margin",  fmtPct(f.op_margin,1)],
+        ["FCF Margin", fmtPct(f.fcf_margin,1)],
+        ["FCF Yield",  fmtPct(f.fcf_yield,1)],
+        ["Cash Qual.", fmtNum(f.cash_quality,2)],
+        ["Consistencia",fmtNum(f.consistency_score,0)+"%"],
+      ].map(([k,v])=>`<div class="kv-item"><div class="kv-label">${k}</div><div class="kv-value">${v}</div></div>`).join("")}
+    </div>
+
+    <!-- Valoración -->
+    <div class="dd-section-title">🏷️ Múltiplos de valoración</div>
+    <div class="kv-grid" style="margin-bottom:14px">
+      ${[
+        ["P/E",        fmtNum(f.pe,1)+"x"],
+        ["P/B",        fmtNum(f.pb,2)+"x"],
+        ["P/S",        fmtNum(f.ps,2)+"x"],
+        ["EV/EBITDA",  fmtNum(f.ev_ebitda,1)+"x"],
+        ["Upside TP",  fmtPct(f.upside,1)],
+        ["Val. Style", f.valuation_style||"—"],
+      ].map(([k,v])=>`<div class="kv-item"><div class="kv-label">${k}</div><div class="kv-value">${v}</div></div>`).join("")}
+    </div>
+
+    <!-- Modelos de riesgo -->
+    <div class="dd-section-title">🛡️ Modelos de riesgo</div>
+    <div class="kv-grid" style="margin-bottom:14px">
+      ${[
+        ["Piotroski F",  fmtNum(f.piotroski,1)+"/9"],
+        ["Altman Z",     fmtNum(f.altman_z,2)+(f.altman_z!=null?(f.altman_z<1.8?" ⚠️ PELIGRO":f.altman_z<3?" 🟡 GRIS":" 🟢 SANO"):"")],
+        ["Beneish M",    fmtNum(f.beneish_m,3)+(f.beneish_m!=null?(f.beneish_m>-1.78?" ⚠️ SOSPECH":f.beneish_m>-2.22?" 🟡 REVISAR":" 🟢 OK"):"")],
+      ].map(([k,v])=>`<div class="kv-item"><div class="kv-label">${k}</div><div class="kv-value">${v}</div></div>`).join("")}
+    </div>
+
+    ${f.red_flags ? `
+      <div style="padding:12px 16px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:10px;margin-bottom:14px">
+        <span class="warning">⚠️ Red flags: ${f.red_flags}</span>
+      </div>` : ""}
+
+    <div class="small" style="color:var(--muted)">
+      ${f.model_note||""} · ${f.not_applicable||""}
+    </div>
   `;
 }
 
+/* ════════════════════════════════════════════════
+   CARTERA
+════════════════════════════════════════════════ */
 function findAsset(ticker) {
-  return allAssets.find(a => String(a.ticker).toUpperCase() === String(ticker).toUpperCase());
+  return allAssets.find(a=>String(a.ticker).toUpperCase()===String(ticker).toUpperCase());
 }
-
-function savePortfolio() {
-  localStorage.setItem("sovereign_portfolio", JSON.stringify(portfolio));
-}
+function savePortfolio() { localStorage.setItem("sovereign_portfolio", JSON.stringify(portfolio)); }
 
 function addPosition() {
-  const ticker = document.getElementById("pfTicker").value.trim().toUpperCase();
+  const ticker   = document.getElementById("pfTicker").value.trim().toUpperCase();
   const quantity = parseFloat(document.getElementById("pfQty").value);
   const buyPrice = parseFloat(document.getElementById("pfPrice").value);
-  const buyDate = document.getElementById("pfDate").value;
-  const note = document.getElementById("pfNote").value;
-
-  if (!ticker || !quantity || !buyPrice) {
-    alert("Ticker, cantidad y precio de compra son obligatorios.");
-    return;
-  }
-
+  const buyDate  = document.getElementById("pfDate").value;
+  const note     = document.getElementById("pfNote").value;
+  if (!ticker||!quantity||!buyPrice) { alert("Ticker, cantidad y precio son obligatorios."); return; }
   const asset = findAsset(ticker);
-
-  portfolio.push({
-    ticker,
-    name: asset ? asset.name : ticker,
-    quantity,
-    buy_price: buyPrice,
-    buy_date: buyDate,
-    note
-  });
-
+  portfolio.push({ ticker, name: asset?asset.name:ticker, quantity, buy_price:buyPrice, buy_date:buyDate, note });
   savePortfolio();
-
   document.getElementById("pfTicker").value = "";
-  document.getElementById("pfQty").value = "";
-  document.getElementById("pfPrice").value = "";
-  document.getElementById("pfNote").value = "";
-
+  document.getElementById("pfQty").value    = "";
+  document.getElementById("pfPrice").value  = "";
+  document.getElementById("pfNote").value   = "";
   renderPortfolio();
 }
 
-function deletePosition(i) {
-  portfolio.splice(i, 1);
-  savePortfolio();
-  renderPortfolio();
-}
-
-function clearPortfolio() {
-  if (!confirm("¿Seguro que quieres vaciar la cartera local?")) return;
-  portfolio = [];
-  savePortfolio();
-  renderPortfolio();
-}
+function deletePosition(i) { portfolio.splice(i,1); savePortfolio(); renderPortfolio(); }
+function clearPortfolio()   { if(!confirm("¿Vaciar cartera?")) return; portfolio=[]; savePortfolio(); renderPortfolio(); }
 
 function systemAction(asset) {
-  if (!asset) {
-    return ["⚪ SIN DATOS", "No hay datos diarios para este activo."];
-  }
-
-  const pressure = Number(asset.exit_pressure_score || 0);
-  const signal = asset.main_signal || "";
-  const state = asset.technical_state || "";
-
-  if (signal.includes("VENTA 100") || pressure >= 75) {
-    return ["🔴 VENDER TODO / REVISAR", "Presión de salida fuerte."];
-  }
-
-  if (pressure >= 50) {
-    return ["🟠 REDUCIR", "Presión de salida elevada."];
-  }
-
-  if (pressure >= 25) {
-    return ["🟡 VIGILAR", "Hay deterioro técnico parcial."];
-  }
-
-  if (state.includes("Alcista confirmado")) {
-    return ["🟢 MANTENER", "Estado técnico favorable."];
-  }
-
-  return ["⚪ MANTENER / VIGILAR", "Sin señal operativa clara."];
+  if (!asset) return ["⚪ SIN DATOS","Sin datos diarios."];
+  const pressure = Number(asset.exit_pressure_score||0);
+  const signal   = asset.main_signal||"";
+  if (signal.includes("VENTA 100")||pressure>=75) return ["🔴 VENDER TODO","Presión fuerte."];
+  if (pressure>=50) return ["🟠 REDUCIR","Presión elevada."];
+  if (pressure>=25) return ["🟡 VIGILAR","Deterioro parcial."];
+  if ((asset.technical_state||"").includes("Alcista confirmado")) return ["🟢 MANTENER","Estado favorable."];
+  return ["⚪ MANTENER/VIGILAR","Sin señal operativa clara."];
 }
 
 function renderPortfolio() {
   if (!portfolio.length) {
-    document.getElementById("portfolioSummary").innerHTML = "";
-    document.getElementById("portfolioTable").innerHTML = `<p class="small">Aún no tienes posiciones guardadas.</p>`;
+    document.getElementById("portfolioSummary").innerHTML="";
+    document.getElementById("portfolioTable").innerHTML=`<p class="small">Sin posiciones guardadas.</p>`;
     return;
   }
-
-  let totalValue = 0;
-  let totalCost = 0;
-
-  const rows = portfolio.map((p, i) => {
+  let totalValue=0, totalCost=0;
+  const rows = portfolio.map((p,i)=>{
     const asset = findAsset(p.ticker);
     const price = asset ? Number(asset.close) : null;
-    const qty = Number(p.quantity);
-    const buy = Number(p.buy_price);
-
-    const value = price ? qty * price : null;
-    const cost = qty * buy;
-    const pnl = value !== null ? value - cost : null;
-    const pnlPct = value !== null && cost ? value / cost - 1 : null;
-
-    if (value !== null) totalValue += value;
-    totalCost += cost;
-
-    const [action, reason] = systemAction(asset);
-
-    return `
-      <tr>
-        <td>
-          <div class="ticker">${p.ticker}</div>
-          <div class="name">${p.name || (asset ? asset.name : "")}</div>
-          ${asset && asset.has_fundamentals ? `<div class="small">Cal ${fmtNum(asset.quality_score,0)} · Val ${fmtNum(asset.valuation_score,0)} · ${asset.fundamental_trend || "—"}</div>` : ""}
-          ${asset && asset.opportunity_score !== null && asset.opportunity_score !== undefined ? `<div class="small">Oport. global ${fmtNum(asset.opportunity_score,0)} · ${asset.opportunity_label || "—"}</div>` : ""}
-        </td>
-        <td>${fmtNum(qty,4)}</td>
-        <td>${fmtNum(buy,2)}</td>
-        <td>${price ? fmtNum(price,2) : "—"}</td>
-        <td>${pnlPct !== null ? fmtPct(pnlPct,2) : "—"}<div class="small">${pnl !== null ? fmtNum(pnl,2) : "—"}</div></td>
-        <td>${asset ? badge(asset.main_signal || "—") : "—"}<div class="small">${asset ? (asset.events_text || "") : ""}</div></td>
-        <td>${asset ? badge(asset.exit_pressure_label || "—") : "—"}<div class="small">${asset ? asset.exit_pressure_notes || "" : ""}</div></td>
-        <td>${badge(action)}<div class="small">${reason}</div></td>
-        <td>${p.buy_date || "—"}<div class="small">${p.note || ""}</div></td>
-        <td><button class="danger" onclick="deletePosition(${i})">Borrar</button></td>
-      </tr>
-    `;
+    const qty   = Number(p.quantity);
+    const buy   = Number(p.buy_price);
+    const value = price ? qty*price : null;
+    const cost  = qty*buy;
+    const pnl   = value!==null ? value-cost : null;
+    const pnlPct= value!==null&&cost ? value/cost-1 : null;
+    if (value!==null) totalValue+=value;
+    totalCost+=cost;
+    const [action,reason] = systemAction(asset);
+    return `<tr>
+      <td>
+        <div class="ticker">${p.ticker}</div>
+        <div class="name">${p.name||(asset?asset.name:"")}</div>
+        ${asset&&asset.has_fundamentals?`<div class="small">Cal ${fmtNum(asset.quality_score,0)} · Val ${fmtNum(asset.valuation_score,0)} · ${asset.fundamental_trend||"—"}</div>`:""}
+        ${asset&&asset.opportunity_score!=null?`<div class="small">Oport. ${fmtNum(asset.opportunity_score,0)} · ${asset.opportunity_label||"—"}</div>`:""}
+      </td>
+      <td>${fmtNum(qty,4)}</td>
+      <td>${fmtNum(buy,2)}</td>
+      <td>${price?fmtNum(price,2):"—"}</td>
+      <td>${pnlPct!==null?fmtPct(pnlPct,2):"—"}<div class="small">${pnl!==null?fmtNum(pnl,2):"—"}</div></td>
+      <td>${asset?badge(asset.main_signal||"—"):"—"}<div class="small">${asset?(asset.events_text||""):""}</div></td>
+      <td>${asset?badge(asset.exit_pressure_label||"—"):"—"}<div class="small">${asset?asset.exit_pressure_notes||"":""}</div></td>
+      <td>${badge(action)}<div class="small">${reason}</div></td>
+      <td>${p.buy_date||"—"}<div class="small">${p.note||""}</div></td>
+      <td><button class="danger" onclick="deletePosition(${i})">Borrar</button></td>
+    </tr>`;
   }).join("");
-
-  const totalPnl = totalValue - totalCost;
-  const totalPnlPct = totalCost ? totalValue / totalCost - 1 : null;
-
-  document.getElementById("portfolioSummary").innerHTML = `
+  const totalPnl    = totalValue-totalCost;
+  const totalPnlPct = totalCost ? totalValue/totalCost-1 : null;
+  document.getElementById("portfolioSummary").innerHTML=`
     <div class="grid">
       <div class="card"><div class="metric-title">Valor cartera</div><div class="metric-big">${fmtNum(totalValue,2)}</div></div>
       <div class="card"><div class="metric-title">Coste</div><div class="metric-big">${fmtNum(totalCost,2)}</div></div>
       <div class="card"><div class="metric-title">PnL</div><div class="metric-big">${fmtNum(totalPnl,2)}</div><div class="small">${fmtPct(totalPnlPct,2)}</div></div>
       <div class="card"><div class="metric-title">Posiciones</div><div class="metric-big">${portfolio.length}</div></div>
-    </div>
-  `;
-
-  document.getElementById("portfolioTable").innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Activo</th><th>Cantidad</th><th>Compra</th><th>Actual</th><th>PnL</th>
-          <th>Señal</th><th>Presión salida</th><th>Acción sistema</th><th>Fecha/Nota</th><th></th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+    </div>`;
+  document.getElementById("portfolioTable").innerHTML=`
+    <table><thead><tr>
+      <th>Activo</th><th>Cantidad</th><th>Compra</th><th>Actual</th><th>PnL</th>
+      <th>Señal</th><th>Presión salida</th><th>Acción sistema</th><th>Fecha/Nota</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function exportPortfolio() {
-  const blob = new Blob([JSON.stringify(portfolio, null, 2)], {type: "application/json"});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "sovereign_portfolio.json";
-  a.click();
+  const blob = new Blob([JSON.stringify(portfolio,null,2)],{type:"application/json"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href=url; a.download="sovereign_portfolio.json"; a.click();
 }
-
 function importPortfolio(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-
-  reader.onload = function(e) {
-    try {
-      portfolio = JSON.parse(e.target.result);
-      savePortfolio();
-      renderPortfolio();
-    } catch {
-      alert("No se pudo importar el JSON.");
-    }
-  };
-
+  const file=event.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{ try{ portfolio=JSON.parse(e.target.result); savePortfolio(); renderPortfolio(); }catch{alert("JSON inválido.");} };
   reader.readAsText(file);
 }
 
