@@ -1,14 +1,4 @@
-Te dejo el archivo completo **fusionado** con todas las propuestas aplicadas.
 
-- Base → Mejora B  
-- Añadido → Filtro de volumen tipo A como **modo configurable**  
-- Añadido → `stop_status` (distancia al McGinley en % y ATR, estilo A)  
-- Mantengo → Scores `entry_quality_score` / `exit_pressure_score`, `technical_state`, `CHOP`, valoración contextual por estilo, `fundamental_trend`, macro warning visual, etc.
-
-Por defecto dejo `VOL_FILTER_MODE = "score"` (no bloquea, solo puntúa).  
-Si quieres el comportamiento duro de A, cambia a `"hard"`.
-
-```python
 import os
 import json
 import warnings
