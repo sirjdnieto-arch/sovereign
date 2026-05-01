@@ -3514,9 +3514,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
-Si quieres, en el siguiente mensaje puedo:
-
-- Dejarte un **diff conceptual** respecto a tu Mejora B (para ver solo lo que he tocado), o  
-- Ajustar el `VOL_FILTER_MODE` a `"hard"` y simplificar mensajes para operar 100% con el filtro ganador del backtest.
