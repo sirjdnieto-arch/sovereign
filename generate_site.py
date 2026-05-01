@@ -1,4 +1,3 @@
-
 import os
 import json
 import warnings
@@ -46,8 +45,8 @@ CONFIG = {
     "VOLUME_MIN_NONZERO_PCT": 0.60,   # calidad mínima de volumen
 
     # Modo de filtro de volumen en compras:
-    #   "score" → no bloquea, solo ajusta entry_quality_score (estilo B)
-    #   "hard"  → bloquea compras si RVOL<umbral y vol es fiable (estilo A, backtest)
+    #   "score" → no bloquea, solo ajusta entry_quality_score
+    #   "hard"  → bloquea compras si RVOL<umbral y vol es fiable
     #   "warn"  → no bloquea, pero marca raw_buy_blocked_by_vol=True
     "VOL_FILTER_MODE": "score",
 
@@ -443,7 +442,8 @@ def signal_freshness(bars_ago):
 
 def entry_quality_label_from_score(score, volume_quality):
     """
-    Etiqueta de calidad de entrada estilo A, derivada del score 0–100 de B.
+    Etiqueta de calidad de entrada estilo "ALTA / BUENA / MEDIA / BAJA".
+    Basado sólo en técnica local + volumen.
     """
     if score is None or pd.isna(score):
         return "—"
@@ -532,7 +532,9 @@ def calculate_entry_quality(
     pvi_gap,
     rvol_now,
     bullish_high_volume,
-    volume_quality
+    volume_quality,
+    dist_to_mcg_exit,
+    dist_to_mcg_exit_atr,
 ):
     if not has_buy:
         return None, "—", ""
@@ -576,6 +578,22 @@ def calculate_entry_quality(
     if not volume_quality:
         score -= 10
         notes.append("⚠️ volumen poco fiable")
+
+    # Penalizar entradas muy extendidas respecto al stop
+    if valid_number(dist_to_mcg_exit_atr):
+        d_atr = float(dist_to_mcg_exit_atr)
+        if d_atr > 3:
+            score -= 15
+            notes.append("entrada muy extendida (>3 ATR)")
+        elif d_atr > 2:
+            score -= 7
+            notes.append("entrada algo extendida (2-3 ATR)")
+
+    if valid_number(dist_to_mcg_exit):
+        d_pct = float(dist_to_mcg_exit) * 100
+        if d_pct > 15:
+            score -= 5
+            notes.append("distancia >15% a McGinley salida")
 
     score = float(np.clip(score, 0, 100))
     label = entry_quality_label_from_score(score, volume_quality)
@@ -756,7 +774,7 @@ def analyze_technical(row):
         has_pvi_sell = raw_has_pvi_sell
         has_mcg_sell = raw_has_mcg_sell
 
-    # ── Filtro de volumen estilo A/B según modo ───────────────
+    # ── Filtro de volumen según modo ───────────────
     vol_confirms = bool(valid_number(rvol_now) and rvol_now >= CONFIG["RVOL_HIGH"])
     raw_buy_blocked_by_vol = False
     mode = CONFIG.get("VOL_FILTER_MODE", "score")
@@ -767,7 +785,7 @@ def analyze_technical(row):
             raw_buy_blocked_by_vol = True
     elif mode == "warn":
         raw_buy_blocked_by_vol = bool(vol_q["volume_quality"] and not vol_confirms)
-    # mode == "score" → no bloquea, solo afecta a entry_quality_score
+    # mode == "score": no bloquea
 
     pvi_cross_current = (
         valid_number(pvi_now, pvi_sig_now, pvi_prev, pvi_sig_prev)
@@ -852,7 +870,9 @@ def analyze_technical(row):
         pvi_gap=pvi_gap,
         rvol_now=rvol_now,
         bullish_high_volume=bullish_high_volume,
-        volume_quality=vol_q["volume_quality"]
+        volume_quality=vol_q["volume_quality"],
+        dist_to_mcg_exit=dist_to_mcg_exit,
+        dist_to_mcg_exit_atr=dist_to_mcg_exit_atr,
     )
 
     exit_score, exit_label, exit_notes = calculate_exit_pressure(
@@ -941,7 +961,7 @@ def analyze_technical(row):
 
 # ============================================================
 # FUNDAMENTALES — CALIDAD / VALORACIÓN / CONFIANZA
-# (base Mejora B, sin tocar apenas)
+# (base Mejora B, con opportunity_score)
 # ============================================================
 
 def safe_div(n, d):
@@ -2138,6 +2158,92 @@ def get_fundamental_raw(ticker):
         return None
 
 
+def compute_opportunity(row):
+    """
+    Oportunidad global (0–100) combinando:
+    - entrada técnica,
+    - calidad del negocio,
+    - precio/fundamentales,
+    - cercanía del stop (ATR),
+    - volumen relativo.
+
+    El 100/100 se reserva para:
+    señal técnica fuerte + volumen alto + stop corto + calidad alta + barata.
+    """
+    tech = safe_float(row.get("entry_quality_score"))
+    qual = safe_float(row.get("quality_score"))
+    val = safe_float(row.get("valuation_score"))
+    dist_atr = safe_float(row.get("dist_to_mcg_exit_atr"))
+    rvol = safe_float(row.get("rvol"))
+
+    if not np.isfinite(tech):
+        return None, "—"
+
+    score = 0.0
+    w = 0.0
+
+    # 1) Técnica de entrada (40%)
+    if np.isfinite(tech):
+        score += tech * 0.4
+        w += 0.4
+
+    # 2) Calidad fundamental (30%)
+    if np.isfinite(qual):
+        score += qual * 0.3
+        w += 0.3
+
+    # 3) Precio/Fundamentales (20%)
+    if np.isfinite(val):
+        score += val * 0.2
+        w += 0.2
+
+    # 4) Cercanía del stop (10%)
+    if np.isfinite(dist_atr):
+        if dist_atr <= 1:
+            s_stop = 100
+        elif dist_atr <= 2:
+            s_stop = 80
+        elif dist_atr <= 3:
+            s_stop = 60
+        else:
+            s_stop = 40
+        score += s_stop * 0.1
+        w += 0.1
+
+    if w > 0:
+        score /= w
+
+    # Ajuste suave por volumen: si RVOL < 1.5, se descuenta un poco
+    if np.isfinite(rvol) and rvol < CONFIG["RVOL_HIGH"]:
+        score -= 5
+
+    score = float(np.clip(score, 0, 100))
+
+    # Condición estricta para 100/100
+    cond_100 = (
+        np.isfinite(tech) and tech >= 90 and
+        np.isfinite(qual) and qual >= 80 and
+        np.isfinite(val) and val >= 70 and
+        np.isfinite(dist_atr) and dist_atr <= 1.0 and
+        np.isfinite(rvol) and rvol >= CONFIG["RVOL_HIGH"]
+    )
+
+    if cond_100:
+        score = 100.0
+        label = "🟢 100/100 · Señal + volumen + stop corto + calidad + barata"
+    else:
+        if score >= 85:
+            label = "🟢 Oportunidad A"
+        elif score >= 70:
+            label = "🟢 Oportunidad B"
+        elif score >= 55:
+            label = "🟡 Oportunidad C (trade, no core)"
+        else:
+            label = "🟠 Oportunidad D (especulativa)"
+
+    return score, label
+
+
 def add_fundamentals(assets_df, universe_df):
     fund_rows = []
 
@@ -2212,11 +2318,16 @@ def add_fundamentals(assets_df, universe_df):
     merged = assets_df.merge(fund_df, on="ticker", how="left", suffixes=("", "_fund"))
     merged["has_fundamentals"] = merged["has_fundamentals"].fillna(False)
 
+    # Oportunidad global (setup completo)
+    merged["opportunity_score"], merged["opportunity_label"] = zip(
+        *merged.apply(compute_opportunity, axis=1)
+    )
+
     return merged
 
 
 # ============================================================
-# MACRO + FX (base Mejora B)
+# MACRO + FX
 # ============================================================
 
 def yf_close_series(ticker, period="1y"):
@@ -2434,7 +2545,7 @@ def currency_context():
 
 
 # ============================================================
-# HTML / FRONTEND (base Mejora B + stop_status / bloqueo vol)
+# HTML / FRONTEND
 # ============================================================
 
 INDEX_HTML = r"""
@@ -2831,80 +2942,117 @@ button.danger {
     </div>
   </section>
 
-    <!-- ═══════════════════ REGLAS (MANUAL OPERATIVO) ════════════════════ -->
+  <!-- ═══════════════════ REGLAS ════════════════════ -->
   <section id="rules" class="section">
     <div class="card">
-      <h2>📘 Manual Operativo LCrack Sovereign v2</h2>
-      <p class="small">Este sistema utiliza un triple filtro secuencial (Macro > Técnico > Fundamental) para una gestión profesional del capital.</p>
+      <h2>📘 Reglas del sistema</h2>
 
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
-        
-        <!-- COLUMNA 1: ENTRADA -->
-        <div>
-          <h3>1️⃣ Filtro Macro (Contexto)</h3>
-          <p>Antes de abrir posiciones, consulta el panel <b>Global</b>:</p>
-          <ul>
-            <li><span class="badge buy">FAVORABLE / NEUTRAL</span> Se permiten nuevas compras.</li>
-            <li><span class="badge sell">CAUTELOSO</span> No abrir nuevas posiciones. Vigilar stops.</li>
-            <li><b>Divisa:</b> Si el <span class="badge sell">EUR FUERTE</span>, la rentabilidad en activos USD se verá penalizada por el cambio.</li>
-          </ul>
+      <h3>1. Señales técnicas (qué dispara compras y ventas)</h3>
+      <p><b>Compra:</b> PVI cruza su EMA(120) de abajo hacia arriba y el PVI se mantiene por encima de su señal.</p>
+      <p><b>Venta 50% PVI:</b> PVI cruza su EMA(120) de arriba hacia abajo.</p>
+      <p><b>Venta 50% McGinley:</b> el precio cruza la McGinley de salida (45) de arriba hacia abajo.</p>
+      <p><b>Venta 100%:</b> PVI negativo + precio por debajo de la McGinley de salida (o señal “🔴 VENTA 100%”).</p>
+      <p><b>RVOL alto (≥1.5x):</b> refuerza las entradas si el volumen es alcista y agrava la presión de salida si es bajista.</p>
+      <p><b>Presión de salida:</b> mide el deterioro técnico persistente, aunque la señal puntual ya haya caducado.</p>
 
-          <h3>2️⃣ La Señal de Compra (Motor Técnico)</h3>
-          <p>Un activo es candidato a compra si cumple simultáneamente:</p>
-          <ul>
-            <li><b>Cruce PVI:</b> El indicador PVI cruza al alza su media de 120 días (últimas 5 velas).</li>
-            <li><b>Filtro Volumen (RVOL):</b> Debe ser <b>≥ 1.5x</b>. Las señales sin volumen se ignoran (Validado por Backtest).</li>
-            <li><b>Régimen:</b> El precio debe estar sobre el McGinley de tendencia (Alcista) o saliendo de zona Lateral.</li>
-          </ul>
-
-          <h3>3️⃣ Filtro de Calidad (Entry Quality)</h3>
-          <p>Priorizamos activos según su <b>Entry Quality Score</b>:</p>
-          <ul>
-            <li><b>Score > 85 (A):</b> Señal de alta probabilidad y limpieza técnica.</li>
-            <li><b>Score 70-85 (B):</b> Señal sólida con buen respaldo.</li>
-            <li><b>Perfil:</b> Busca <span class="badge buy">Calidad con descuento</span> o <span class="badge buy">Calidad razonable</span>.</li>
-            <li><b>Red Flags:</b> Evita activos con avisos de <span class="warning">Altman</span> (riesgo financiero) o <span class="warning">Deuda alta</span>.</li>
-          </ul>
-        </div>
-
-        <!-- COLUMNA 2: RIESGO Y SALIDA -->
-        <div>
-          <h3>4️⃣ Gestión del Riesgo (Stops)</h3>
-          <p>Analiza la distancia al McGinley de salida (Stop):</p>
-          <ul>
-            <li><span class="badge buy">AJUSTADO ( < 2 ATR)</span> Riesgo bajo. Ideal para entrar.</li>
-            <li><span class="badge partial">HOLGADO ( 2-3 ATR)</span> El activo ya ha corrido. Riesgo de retroceso.</li>
-            <li><span class="badge sell">LEJANO ( > 3 ATR)</span> Activo estirado (sobrecomprado). <b>No perseguir el precio.</b></li>
-          </ul>
-
-          <h3>5️⃣ Protocolo de Venta (Salida 50/50)</h3>
-          <p>El sistema propone una salida escalonada para capturar beneficios y proteger capital:</p>
-          <ul>
-            <li><b>Venta Parcial (50%):</b> Si el PVI cruza su media a la baja <b>O</b> el precio rompe el McGinley de salida.</li>
-            <li><b>Venta Total (100%):</b> Si el PVI es negativo <b>Y</b> el precio está bajo el McGinley <b>O</b> el <b>Exit Pressure</b> > 75.</li>
-            <li><b>RVOL Bajista:</b> Si el activo cae con volumen > 1.5x, la presión de salida se acelera (<span class="badge sell">Salida Fuerte</span>).</li>
-          </ul>
-
-          <h3>6️⃣ Acciones Sugeridas en Cartera</h3>
-          <ul>
-            <li><span class="badge buy">MANTENER</span> Alcista, PVI positivo y presión de salida baja.</li>
-            <li><span class="badge partial">VIGILAR</span> Stop muy cerca o pérdida de momento.</li>
-            <li><span class="badge partial">REDUCIR</span> Cierre parcial por rotura técnica.</li>
-            <li><span class="badge sell">VENDER TODO</span> Confirmación de fin de tendencia.</li>
-          </ul>
-        </div>
-      </div>
-
-      <p class="warning" style="margin-top:20px; border-top: 1px solid var(--border); padding-top:10px;">
-        <b>⚠️ Aviso Legal:</b> Esta herramienta es un modelo matemático basado en reglas objetivas. Los resultados pasados no garantizan rentabilidades futuras. El usuario es responsable de sus propias decisiones de inversión.
+      <h3>2. Cómo leer una señal de COMPRA</h3>
+      <p>
+        <b>1) Señal y frescura</b><br>
+        – Operar solo compras cuando la señal principal es <b>🟢 COMPRA</b> y la frescura es <b>🔴 Hoy</b> o <b>🟠 Reciente</b>.<br>
+        – Si la frescura es <b>⚪ Antigua</b>, tratarla como señal vieja: solo válida si el precio sigue cerca del McGinley.
       </p>
+
+      <p>
+        <b>2) Régimen y estado técnico</b><br>
+        – Mejor contexto: <b>🟢 ALCISTA</b> o estado <b>🟢 Alcista confirmado</b>.<br>
+        – En <b>🟡 LATERAL</b> ser más exigente, solo compras selectivas.<br>
+        – En <b>🔴 BAJISTA</b> evitar nuevas compras; solo apuestas muy tácticas y pequeñas.
+      </p>
+
+      <p>
+        <b>3) Calidad de la entrada (entry_quality_score)</b><br>
+        – <b>Entrada ideal:</b> score ≥ 80, etiqueta tipo <b>🟢 ALTA</b> o <b>🟢 BUENA</b>, PVI POSITIVO, gap PVI no micro y, si es posible, RVOL ≥ 1.5x con vela alcista.<br>
+        – <b>Entrada aceptable:</b> score 70–80, pero con alguna pega (lateralidad, poco volumen, cerca de McGinley salida…).<br>
+        – <b>Entrada floja:</b> score &lt; 70 → mejor no abrir posición nueva salvo trade pequeño y muy táctico.
+      </p>
+
+      <p>
+        <b>4) Volumen y calidad del PVI</b><br>
+        – El sistema revisa si el volumen histórico es fiable (≥60% de días con volumen &gt; 0).<br>
+        – Si <b>VOL NO FIABLE</b>, el PVI puede ser menos representativo: conviene validar el gráfico en TradingView.<br>
+        – El filtro de volumen (RVOL) puede actuar como:<br>
+        &nbsp;&nbsp;• <b>Filtro duro</b> (modo “hard”): bloquea compras si el volumen no acompaña.<br>
+        &nbsp;&nbsp;• <b>Penalización</b> (modo “score”): no bloquea, pero baja el score de entrada.<br>
+        &nbsp;&nbsp;• <b>Aviso</b> (modo “warn”): no bloquea, pero marca la señal como “bloqueada por volumen bajo”.
+      </p>
+
+      <h3>5. Cuándo REDUCIR o CERRAR (exit_pressure)</h3>
+      <p>
+        <b>Presión de salida (exit_pressure_score)</b><br>
+        – <b>&lt; 25</b> → <b>🟢 Baja</b>: no hay prisa por vender; se puede mantener si el resto acompaña.<br>
+        – <b>25–50</b> → <b>🟡 Vigilar</b>: hay deterioro parcial; ajustar stop, no aumentar posición.<br>
+        – <b>50–75</b> → <b>🟠 Reducir</b>: vender parte; suele haber precio bajo McGinley salida y/o régimen bajista/lateral.<br>
+        – <b>≥ 75</b> o señal “VENTA 100%” → <b>🔴 Salida fuerte</b>: cerrar o reducir agresivamente.
+      </p>
+
+      <h3>6. Stop y tamaño de posición</h3>
+      <p>
+        El sistema calcula la distancia del precio a la McGinley de salida en % y en ATR:<br>
+        – <b>🟢 AJUSTADO (&lt;2% y &lt;1 ATR)</b>: entrada cerca del soporte dinámico → tamaño normal.<br>
+        – <b>🟢 AJUSTADO (1–2 ATR)</b>: todavía razonable.<br>
+        – <b>🟡 HOLGADO (2–3 ATR)</b>: stop más lejano; tamaño prudente.<br>
+        – <b>🟠 LEJANO (&gt;3 ATR)</b>: entrada muy extendida → tamaño pequeño o esperar pullback antes de entrar.<br><br>
+        En general, evitar abrir grandes posiciones con stops muy lejanos aunque el score de entrada sea 100/100.
+      </p>
+
+      <h3>7. Cómo interpretar la “Oportunidad global”</h3>
+      <p>
+        Además de la <b>Entrada técnica</b>, el sistema calcula una <b>Oportunidad global</b> (0–100) combinando:
+        entrada, calidad fundamental, precio/fundamentales, distancia al stop y volumen relativo.<br><br>
+
+        – <b>100/100:</b> Caso ideal → señal de compra clara + volumen fuerte + stop cercano + empresa de calidad + barata.<br>
+        – <b>Oportunidad A (85–99):</b> Setup muy bueno, casi todo alineado.<br>
+        – <b>Oportunidad B (70–84):</b> Buen setup pero con alguna pega (valoración cara, stop no tan cercano, etc.).<br>
+        – <b>Oportunidad C (55–69):</b> Técnicamente interesante, pero fundamentalmente discutible (trade, no core).<br>
+        – <b>Oportunidad D (&lt;55):</b> Señal especulativa o con muchos “peros”; mejor evitar como posición principal.
+      </p>
+
+      <h3>8. Lectura de los fundamentales</h3>
+      <p>
+        El modelo separa claramente <b>Calidad del negocio</b> (0–100) y <b>Precio/Fundamentales</b> (0–100).<br><br>
+        – <b>Core de largo plazo:</b><br>
+        &nbsp;&nbsp;• Calidad ≥ 75 (“Muy buena” o “Excelente”).<br>
+        &nbsp;&nbsp;• Precio/Fund. ≥ 45 (“Razonable”, “Barata”, “Muy barata”).<br>
+        &nbsp;&nbsp;• Perfil: “🟢 Calidad con descuento” o “✅ Calidad razonable”.<br>
+        &nbsp;&nbsp;• Tendencia fundamental: “📈 Mejorando” o “➡️ Estable”.<br>
+        &nbsp;&nbsp;• Confianza A/B y sin red flags graves (Altman muy bajo, Beneish sospechoso, Deuda alta…).<br><br>
+
+        – <b>Value especulativo:</b><br>
+        &nbsp;&nbsp;• Calidad 50–65, Precio/Fund. alto (barata).<br>
+        &nbsp;&nbsp;• Perfil: “🟡 Value especulativo”.<br>
+        &nbsp;&nbsp;• Se puede jugar con buenas señales técnicas, pero con más disciplina de stop.<br><br>
+
+        – <b>Calidad cara:</b><br>
+        &nbsp;&nbsp;• Calidad alta (≥75) pero Precio/Fund. bajo (Cara/Muy cara).<br>
+        &nbsp;&nbsp;• Perfil: “💎 Calidad cara”.<br>
+        &nbsp;&nbsp;• Aptas para largo plazo, pero con menos margen de seguridad; mejor esperar correcciones si es posible.<br><br>
+
+        – <b>Débil y cara:</b><br>
+        &nbsp;&nbsp;• Calidad &lt;50 y Precio/Fund. bajo.<br>
+        &nbsp;&nbsp;• Perfil: “🔴 Débil y cara”.<br>
+        &nbsp;&nbsp;• En general a evitar como inversión; solo tienen sentido como trades técnicos de corto plazo muy controlados.
+      </p>
+
+      <h3>9. Macro y divisa</h3>
+      <p>
+        – El panel macro puede estar en modo <b>🟢 FAVORABLE</b>, <b>🟡 NEUTRAL</b> o <b>🔴 CAUTELOSO</b>.<br>
+        – Si el macro está “🔴 CAUTELOSO”, las compras se consideran más frágiles y el sistema muestra un aviso en las señales de compra (“⚠️ Macro cautelosa”).<br>
+        – Para inversor en EUR, el panel EUR/USD indica si el cambio de divisa puede sumar o restar rentabilidad a las posiciones en USD.
+      </p>
+
+      <p class="warning"><b>Aviso:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
     </div>
   </section>
-### ¿Por qué este cambio es importante?
-1.  **Doble columna:** He organizado las reglas en "Entrada" y "Riesgo/Salida" para que puedas leerlas de un vistazo.
-2.  **Referencia a badges:** He usado las mismas clases de colores (`buy`, `sell`, `partial`) que ves en las tablas para que la conexión mental sea instantánea.
-3.  **Filosofía 50/50:** Deja claro que no hay por qué vender todo de golpe, lo cual ayuda mucho psicológicamente a dejar correr las ganancias.
-4.  **No perseguir el precio:** Incluye la regla de oro de no comprar si el stop está a más de 3 ATRs, lo cual te salvará de comprar en techos.
 
   <div class="footer">
     LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed.
@@ -3108,8 +3256,13 @@ function techBlock(a) {
     </div>
 
     <div class="small">
-      Entrada: <b>${a.entry_quality_label || "—"}</b>
+      <b>Entrada técnica:</b> ${a.entry_quality_label || "—"}
       ${a.entry_quality_score !== null && a.entry_quality_score !== undefined ? " · " + fmtNum(a.entry_quality_score,0) + "/100" : ""}
+    </div>
+
+    <div class="small">
+      <b>Oportunidad global:</b> ${a.opportunity_label || "—"}
+      ${a.opportunity_score !== null && a.opportunity_score !== undefined ? " · " + fmtNum(a.opportunity_score,0) + "/100" : ""}
     </div>
 
     <div class="small">
@@ -3134,10 +3287,7 @@ function techBlock(a) {
     <div class="small">
       Dist McG ${fmtPct(a.dist_to_mcg_exit,1)} ·
       ATR ${fmtNum(a.dist_to_mcg_exit_atr,2)}x ·
-      CHOP ${fmtNum(a.chop,1)}
-    </div>
-
-    <div class="small">
+      CHOP ${fmtNum(a.chop,1)}<br>
       Stop: ${a.stop_status || "—"}
     </div>
 
@@ -3393,6 +3543,7 @@ function renderPortfolio() {
           <div class="ticker">${p.ticker}</div>
           <div class="name">${p.name || (asset ? asset.name : "")}</div>
           ${asset && asset.has_fundamentals ? `<div class="small">Cal ${fmtNum(asset.quality_score,0)} · Val ${fmtNum(asset.valuation_score,0)} · ${asset.fundamental_trend || "—"}</div>` : ""}
+          ${asset && asset.opportunity_score !== null && asset.opportunity_score !== undefined ? `<div class="small">Oport. global ${fmtNum(asset.opportunity_score,0)} · ${asset.opportunity_label || "—"}</div>` : ""}
         </td>
         <td>${fmtNum(qty,4)}</td>
         <td>${fmtNum(buy,2)}</td>
