@@ -2831,12 +2831,7 @@ button.danger {
     </div>
   </section>
 
-  Aquí tienes el bloque de código HTML listo para **copiar y pegar** en tu script Python. 
-
-He estructurado el texto para que visualmente sea muy fácil de consultar mientras usas la herramienta. Sustituye la sección `<section id="rules" class="section">` en tu variable `INDEX_HTML` por esta:
-
-```html
-  <!-- ═══════════════════ REGLAS (MANUAL OPERATIVO) ════════════════════ -->
+    <!-- ═══════════════════ REGLAS (MANUAL OPERATIVO) ════════════════════ -->
   <section id="rules" class="section">
     <div class="card">
       <h2>📘 Manual Operativo LCrack Sovereign v2</h2>
@@ -2851,15 +2846,15 @@ He estructurado el texto para que visualmente sea muy fácil de consultar mientr
           <ul>
             <li><span class="badge buy">FAVORABLE / NEUTRAL</span> Se permiten nuevas compras.</li>
             <li><span class="badge sell">CAUTELOSO</span> No abrir nuevas posiciones. Vigilar stops.</li>
-            <li><b>Divisa:</b> Si el <span class="badge sell">EUR FUERTE</span>, la rentabilidad en activos USD se verá penalizada por el tipo de cambio.</li>
+            <li><b>Divisa:</b> Si el <span class="badge sell">EUR FUERTE</span>, la rentabilidad en activos USD se verá penalizada por el cambio.</li>
           </ul>
 
           <h3>2️⃣ La Señal de Compra (Motor Técnico)</h3>
           <p>Un activo es candidato a compra si cumple simultáneamente:</p>
           <ul>
-            <li><b>Cruce PVI:</b> El indicador PVI cruza al alza su media de 120 días (en las últimas 5 velas).</li>
-            <li><b>Filtro de Volumen (RVOL):</b> Debe ser <b>≥ 1.5x</b>. Las señales sin volumen se ignoran (Validado por Backtest).</li>
-            <li><b>Régimen:</b> El precio debe estar sobre el McGinley de tendencia (Alcista) o saliendo de una zona Lateral.</li>
+            <li><b>Cruce PVI:</b> El indicador PVI cruza al alza su media de 120 días (últimas 5 velas).</li>
+            <li><b>Filtro Volumen (RVOL):</b> Debe ser <b>≥ 1.5x</b>. Las señales sin volumen se ignoran (Validado por Backtest).</li>
+            <li><b>Régimen:</b> El precio debe estar sobre el McGinley de tendencia (Alcista) o saliendo de zona Lateral.</li>
           </ul>
 
           <h3>3️⃣ Filtro de Calidad (Entry Quality)</h3>
@@ -2898,7 +2893,6 @@ He estructurado el texto para que visualmente sea muy fácil de consultar mientr
             <li><span class="badge sell">VENDER TODO</span> Confirmación de fin de tendencia.</li>
           </ul>
         </div>
-
       </div>
 
       <p class="warning" style="margin-top:20px; border-top: 1px solid var(--border); padding-top:10px;">
@@ -2906,8 +2900,6 @@ He estructurado el texto para que visualmente sea muy fácil de consultar mientr
       </p>
     </div>
   </section>
-```
-
 ### ¿Por qué este cambio es importante?
 1.  **Doble columna:** He organizado las reglas en "Entrada" y "Riesgo/Salida" para que puedas leerlas de un vistazo.
 2.  **Referencia a badges:** He usado las mismas clases de colores (`buy`, `sell`, `partial`) que ves en las tablas para que la conexión mental sea instantánea.
