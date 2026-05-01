@@ -1,3 +1,14 @@
+Te dejo el archivo completo **fusionado** con todas las propuestas aplicadas.
+
+- Base → Mejora B  
+- Añadido → Filtro de volumen tipo A como **modo configurable**  
+- Añadido → `stop_status` (distancia al McGinley en % y ATR, estilo A)  
+- Mantengo → Scores `entry_quality_score` / `exit_pressure_score`, `technical_state`, `CHOP`, valoración contextual por estilo, `fundamental_trend`, macro warning visual, etc.
+
+Por defecto dejo `VOL_FILTER_MODE = "score"` (no bloquea, solo puntúa).  
+Si quieres el comportamiento duro de A, cambia a `"hard"`.
+
+```python
 import os
 import json
 import warnings
@@ -24,15 +35,46 @@ warnings.filterwarnings("ignore")
 
 CONFIG = {
     "LOOKBACK_SIGNAL": 5,
+
     "PVI_MA": 120,
     "PVI_SIGNAL_TYPE": "EMA",
+
     "MCG_REGIME_N": 20,
     "MCG_EXIT_N": 45,
+
     "LATERAL_LOOKBACK": 20,
+
     "PRICE_PERIOD": "10y",
     "DROP_TODAY_CANDLE": True,
     "REQUIRE_CURRENT_SIGNAL_STATE": True,
+
     "MAX_WORKERS": 8,
+
+    # Volumen y contexto
+    "RVOL_PERIOD": 30,
+    "RVOL_HIGH": 1.5,                 # umbral de RVOL "alto"
+    "VOLUME_MIN_NONZERO_PCT": 0.60,   # calidad mínima de volumen
+
+    # Modo de filtro de volumen en compras:
+    #   "score" → no bloquea, solo ajusta entry_quality_score (estilo B)
+    #   "hard"  → bloquea compras si RVOL<umbral y vol es fiable (estilo A, backtest)
+    #   "warn"  → no bloquea, pero marca raw_buy_blocked_by_vol=True
+    "VOL_FILTER_MODE": "score",
+
+    "ATR_PERIOD": 14,
+    "CHOP_PERIOD": 14,
+
+    "PVI_GAP_MIN_STRONG": 0.001,  # 0.10%
+
+    # Solo para clasificar, no para bloquear (entrada técnica)
+    "ENTRY_QUALITY_A": 85,
+    "ENTRY_QUALITY_B": 70,
+    "ENTRY_QUALITY_C": 55,
+
+    # Presión de salida
+    "EXIT_PRESSURE_VIGILAR": 25,
+    "EXIT_PRESSURE_REDUCIR": 50,
+    "EXIT_PRESSURE_FUERTE": 75,
 }
 
 
@@ -43,31 +85,38 @@ UNIVERSE = {
         "ABBV", "KO", "PEP", "COST", "BAC", "CRM", "NFLX", "ABT", "MCD",
         "LMT", "EL", "NEE", "CAT", "MRK", "TPL"
     ],
+
     "NASDAQ 100": [
         "ASML", "ADBE", "AVGO", "CSCO", "CMCSA", "AMD", "TXN", "QCOM",
         "AMAT", "INTU", "VRTX", "ZS", "PLTR", "CSU.TO", "MU"
     ],
+
     "Euro Stoxx 50": [
         "LVMUY", "SAP", "OR.PA", "TTE", "MC.PA", "SIE.DE", "ENGI.PA",
         "AIR.PA", "ALV.DE", "EL.PA", "AI.PA", "BNP.PA", "SAN.PA",
         "KER.PA", "SU.PA", "NESN.SW"
     ],
+
     "DAX 40": [
         "LIN.DE", "VOW3.DE", "BMW.DE", "ADS.DE", "IFX.DE", "MUV2.DE",
         "FRE.DE", "DTE.DE", "RWE.DE"
     ],
+
     "IBEX 35": [
         "ITX.MC", "BBVA.MC", "SAN.MC", "TEF.MC", "IBE.MC", "REP.MC",
         "FER.MC", "ACX.MC", "ACS.MC", "AENA.MC", "ANA.MC", "IAG.MC",
         "LOG.MC", "MAP.MC", "PUIG.MC", "NTGY.MC", "ELE.MC", "IDR.MC"
     ],
+
     "China": [
         "PDD", "NIO", "TCEHY", "BZUN", "FUTU", "MOMO", "MNSO",
         "TAL", "EDU", "WB", "XPEV"
     ],
+
     "Commodities": [
         "GC=F", "SI=F"
     ],
+
     "Crypto": [
         "BTC-USD", "ETH-USD", "XRP-USD"
     ]
@@ -113,18 +162,26 @@ def valid_number(*xs):
 def clean_json_value(x):
     if isinstance(x, (np.integer,)):
         return int(x)
+
     if isinstance(x, (np.floating,)):
         if np.isnan(x) or np.isinf(x):
             return None
         return float(x)
+
     if isinstance(x, float):
         if np.isnan(x) or np.isinf(x):
             return None
         return x
+
     if isinstance(x, (pd.Timestamp, datetime)):
         return x.isoformat()
-    if pd.isna(x):
-        return None
+
+    try:
+        if pd.isna(x):
+            return None
+    except Exception:
+        pass
+
     return x
 
 
@@ -184,15 +241,20 @@ def yf_download_prices(ticker, period="2y"):
             progress=False,
             threads=False
         )
+
         df = flatten_yf(df)
 
         if df.empty or "Close" not in df.columns:
             return pd.DataFrame()
 
-        if "Volume" not in df.columns:
-            df["Volume"] = 0
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col not in df.columns:
+                if col == "Volume":
+                    df[col] = 0
+                else:
+                    df[col] = df["Close"]
 
-        df = df[["Close", "Volume"]].dropna(subset=["Close"])
+        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
         return df
 
     except Exception:
@@ -211,7 +273,7 @@ def get_name_currency_sector(ticker):
 
 
 # ============================================================
-# TÉCNICO: PVI + MCGINLEY
+# TÉCNICO: INDICADORES Y SCORES
 # ============================================================
 
 def calculate_mcginley(close, period):
@@ -243,7 +305,14 @@ def calculate_mcginley(close, period):
 
 
 def calculate_pvi(df, ma_period):
+    """
+    PVI:
+    - Valor inicial 1000.
+    - Solo suma variación cuando Vol actual > Vol anterior.
+    - Señal: EMA del PVI.
+    """
     df = df.copy()
+
     df["ROC"] = df["Close"].pct_change().fillna(0)
 
     vols = df["Volume"].fillna(0).values
@@ -258,6 +327,7 @@ def calculate_pvi(df, ma_period):
             pvi.append(pvi[-1])
 
     df["PVI"] = pvi
+
     df["PVI_Signal"] = (
         df["PVI"]
         .ewm(span=ma_period, adjust=False, min_periods=ma_period)
@@ -265,6 +335,85 @@ def calculate_pvi(df, ma_period):
     )
 
     return df
+
+
+def calculate_atr(df, period=14):
+    df = df.copy()
+
+    high = df["High"].astype(float)
+    low = df["Low"].astype(float)
+    close = df["Close"].astype(float)
+    prev_close = close.shift(1)
+
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+
+    atr = tr.rolling(period, min_periods=period).mean()
+    return atr
+
+
+def calculate_chop(df, period=14):
+    df = df.copy()
+
+    high = df["High"].astype(float)
+    low = df["Low"].astype(float)
+    close = df["Close"].astype(float)
+    prev_close = close.shift(1)
+
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+
+    atr_sum = tr.rolling(period, min_periods=period).sum()
+    high_max = high.rolling(period, min_periods=period).max()
+    low_min = low.rolling(period, min_periods=period).min()
+
+    chop = 100 * np.log10(atr_sum / (high_max - low_min + 1e-9)) / np.log10(period)
+    return chop.replace([np.inf, -np.inf], np.nan)
+
+
+def volume_quality_check(df, min_nonzero_pct=0.60):
+    """
+    Control de calidad del volumen.
+    No bloquea por sí solo, pero marca si el PVI puede ser poco fiable.
+    """
+    if df is None or df.empty or "Volume" not in df.columns:
+        return {
+            "volume_quality": False,
+            "volume_nonzero_pct": 0.0,
+            "volume_zero_days": None,
+            "volume_warning": "Sin volumen"
+        }
+
+    vol = df["Volume"].fillna(0)
+    nonzero_pct = float((vol > 0).mean())
+    zero_days = int((vol <= 0).sum())
+
+    if nonzero_pct >= min_nonzero_pct:
+        warning = ""
+        ok = True
+    else:
+        warning = "Volumen poco fiable; validar PVI en TradingView"
+        ok = False
+
+    return {
+        "volume_quality": bool(ok),
+        "volume_nonzero_pct": nonzero_pct,  # 0–1
+        "volume_zero_days": zero_days,
+        "volume_warning": warning
+    }
+
+
+def calculate_rvol(df, period=30):
+    vol = df["Volume"].fillna(0).astype(float)
+    ma = vol.rolling(period, min_periods=max(5, period // 2)).mean()
+    rvol = vol / ma.replace(0, np.nan)
+    return rvol.replace([np.inf, -np.inf], np.nan)
 
 
 def bars_ago_for_signal(signal_series, lookback):
@@ -287,6 +436,213 @@ def ago_txt(n):
     if n == 1:
         return "hace 1 vela"
     return f"hace {n} velas"
+
+
+def signal_freshness(bars_ago):
+    if bars_ago is None or pd.isna(bars_ago):
+        return "—"
+    bars_ago = int(bars_ago)
+    if bars_ago == 0:
+        return "🔴 Hoy"
+    if bars_ago <= 2:
+        return "🟠 Reciente"
+    if bars_ago <= 5:
+        return "🟡 Esta semana"
+    return "⚪ Antigua"
+
+
+def entry_quality_label_from_score(score, volume_quality):
+    """
+    Etiqueta de calidad de entrada estilo A, derivada del score 0–100 de B.
+    """
+    if score is None or pd.isna(score):
+        return "—"
+    if not volume_quality:
+        return "⚪ VOL NO FIABLE"
+
+    s = float(score)
+    if s >= CONFIG["ENTRY_QUALITY_A"]:
+        return "🟢 ALTA · Compra muy limpia"
+    if s >= CONFIG["ENTRY_QUALITY_B"]:
+        return "🟢 BUENA · Compra buena"
+    if s >= CONFIG["ENTRY_QUALITY_C"]:
+        return "🟡 MEDIA · Aceptable"
+    return "🟠 BAJA · Señal débil"
+
+
+def exit_pressure_label(score):
+    if score is None or pd.isna(score):
+        return "—"
+    score = float(score)
+    if score >= CONFIG["EXIT_PRESSURE_FUERTE"]:
+        return "🔴 Salida fuerte"
+    if score >= CONFIG["EXIT_PRESSURE_REDUCIR"]:
+        return "🟠 Reducir"
+    if score >= CONFIG["EXIT_PRESSURE_VIGILAR"]:
+        return "🟡 Vigilar"
+    return "🟢 Baja"
+
+
+def technical_state_label(regime, pvi_status, price_below_mcg_exit):
+    if price_below_mcg_exit and pvi_status == "NEGATIVO":
+        return "🔴 Deteriorado"
+    if price_below_mcg_exit:
+        return "🟠 Bajo McGinley"
+    if "ALCISTA" in str(regime) and pvi_status == "POSITIVO":
+        return "🟢 Alcista confirmado"
+    if "LATERAL" in str(regime):
+        return "🟡 Lateral"
+    if "BAJISTA" in str(regime):
+        return "🔴 Bajista"
+    return "⚪ Neutral"
+
+
+def stop_status_label(dist_ratio, dist_atr):
+    """
+    Estado del stop según distancia al McGinley de salida:
+    - dist_ratio: ratio (close/exit - 1)
+    - dist_atr: múltiplos de ATR
+    """
+    if not valid_number(dist_ratio):
+        return "—"
+
+    dist_pct = float(dist_ratio) * 100.0
+
+    if dist_pct < 2:
+        pct_status = "🔴 MUY CERCA"
+    elif dist_pct < 5:
+        pct_status = "🟢 AJUSTADO"
+    elif dist_pct < 10:
+        pct_status = "🟡 HOLGADO"
+    else:
+        pct_status = "🟠 LEJANO"
+
+    if valid_number(dist_atr):
+        da = float(dist_atr)
+        if da < 1:
+            atr_status = "(<1 ATR)"
+        elif da < 2:
+            atr_status = "(1-2 ATR)"
+        elif da < 3:
+            atr_status = "(2-3 ATR)"
+        else:
+            atr_status = "(>3 ATR)"
+    else:
+        atr_status = ""
+
+    return f"{pct_status} {atr_status}".strip()
+
+
+def calculate_entry_quality(
+    has_buy,
+    close_now,
+    mcg_regime_now,
+    mcg_exit_now,
+    recent_crosses,
+    pvi_gap,
+    rvol_now,
+    bullish_high_volume,
+    volume_quality
+):
+    if not has_buy:
+        return None, "—", ""
+
+    score = 40
+    notes = ["PVI compra reciente"]
+
+    if valid_number(close_now, mcg_regime_now) and close_now > mcg_regime_now:
+        score += 20
+        notes.append("precio sobre McGinley régimen")
+    else:
+        notes.append("contra tendencia / bajo régimen")
+
+    if valid_number(close_now, mcg_exit_now) and close_now > mcg_exit_now:
+        score += 10
+        notes.append("precio sobre McGinley salida")
+    else:
+        notes.append("cerca/bajo McGinley salida")
+
+    if recent_crosses <= 2:
+        score += 15
+        notes.append("no lateral")
+    else:
+        notes.append("lateralidad elevada")
+
+    if bullish_high_volume:
+        score += 15
+        notes.append(f"RVOL alto ≥{CONFIG['RVOL_HIGH']}x alcista")
+    elif valid_number(rvol_now) and rvol_now >= 1.0:
+        score += 8
+        notes.append("volumen normal/positivo")
+    else:
+        notes.append("sin confirmación de volumen")
+
+    if valid_number(pvi_gap) and pvi_gap >= CONFIG["PVI_GAP_MIN_STRONG"]:
+        score += 10
+        notes.append("gap PVI no micro")
+    else:
+        notes.append("microcruce PVI / gap débil")
+
+    if not volume_quality:
+        score -= 10
+        notes.append("⚠️ volumen poco fiable")
+
+    score = float(np.clip(score, 0, 100))
+    label = entry_quality_label_from_score(score, volume_quality)
+    return score, label, " · ".join(notes)
+
+
+def calculate_exit_pressure(
+    pvi_status,
+    close_now,
+    mcg_exit_now,
+    mcg_regime_now,
+    regime,
+    recent_crosses,
+    bearish_high_volume,
+    pvi_gap
+):
+    score = 0
+    notes = []
+
+    if valid_number(close_now, mcg_exit_now) and close_now < mcg_exit_now:
+        score += 35
+        notes.append("precio bajo McGinley salida")
+
+    if pvi_status == "NEGATIVO":
+        score += 30
+        notes.append("PVI negativo")
+
+    if valid_number(close_now, mcg_regime_now) and close_now < mcg_regime_now:
+        score += 15
+        notes.append("precio bajo McGinley régimen")
+
+    if "BAJISTA" in str(regime):
+        score += 10
+        notes.append("régimen bajista")
+    elif "LATERAL" in str(regime):
+        score += 8
+        notes.append("régimen lateral")
+
+    if recent_crosses > 2:
+        score += 5
+        notes.append("cruces recientes/lateralidad")
+
+    if bearish_high_volume:
+        score += 15
+        notes.append(f"RVOL bajista ≥{CONFIG['RVOL_HIGH']}x")
+
+    if valid_number(pvi_gap) and pvi_gap <= -CONFIG["PVI_GAP_MIN_STRONG"]:
+        score += 10
+        notes.append("gap PVI negativo claro")
+
+    score = float(np.clip(score, 0, 100))
+    label = exit_pressure_label(score)
+
+    if not notes:
+        notes.append("sin presión técnica relevante")
+
+    return score, label, " · ".join(notes)
 
 
 def analyze_technical(row):
@@ -316,9 +672,14 @@ def analyze_technical(row):
             "error": "Sin datos suficientes"
         }
 
+    vol_q = volume_quality_check(df, CONFIG["VOLUME_MIN_NONZERO_PCT"])
+
     df = calculate_pvi(df, CONFIG["PVI_MA"])
     df["McG_Regime"] = calculate_mcginley(df["Close"], CONFIG["MCG_REGIME_N"])
     df["McG_Exit"] = calculate_mcginley(df["Close"], CONFIG["MCG_EXIT_N"])
+    df["ATR"] = calculate_atr(df, CONFIG["ATR_PERIOD"])
+    df["CHOP"] = calculate_chop(df, CONFIG["CHOP_PERIOD"])
+    df["RVOL"] = calculate_rvol(df, CONFIG["RVOL_PERIOD"])
 
     df["PVI_Cross_Up"] = (
         (df["PVI"] > df["PVI_Signal"])
@@ -360,6 +721,24 @@ def analyze_technical(row):
     pvi_prev = safe_float(df["PVI"].iloc[-2])
     pvi_sig_prev = safe_float(df["PVI_Signal"].iloc[-2])
 
+    atr_now = safe_float(c["ATR"])
+    chop_now = safe_float(c["CHOP"])
+    rvol_now = safe_float(c["RVOL"])
+
+    close_prev = safe_float(df["Close"].iloc[-2])
+
+    bullish_high_volume = (
+        valid_number(rvol_now, close_now, close_prev)
+        and rvol_now >= CONFIG["RVOL_HIGH"]
+        and close_now > close_prev
+    )
+
+    bearish_high_volume = (
+        valid_number(rvol_now, close_now, close_prev)
+        and rvol_now >= CONFIG["RVOL_HIGH"]
+        and close_now < close_prev
+    )
+
     raw_has_buy = buy_ago is not None
     raw_has_pvi_sell = pvi_sell_ago is not None
     raw_has_mcg_sell = mcg_sell_ago is not None
@@ -370,11 +749,13 @@ def analyze_technical(row):
             and valid_number(pvi_now, pvi_sig_now)
             and pvi_now > pvi_sig_now
         )
+
         has_pvi_sell = (
             raw_has_pvi_sell
             and valid_number(pvi_now, pvi_sig_now)
             and pvi_now < pvi_sig_now
         )
+
         has_mcg_sell = (
             raw_has_mcg_sell
             and valid_number(close_now, mcg_exit_now)
@@ -385,27 +766,53 @@ def analyze_technical(row):
         has_pvi_sell = raw_has_pvi_sell
         has_mcg_sell = raw_has_mcg_sell
 
+    # ── Filtro de volumen estilo A/B según modo ───────────────
+    vol_confirms = bool(valid_number(rvol_now) and rvol_now >= CONFIG["RVOL_HIGH"])
+    raw_buy_blocked_by_vol = False
+    mode = CONFIG.get("VOL_FILTER_MODE", "score")
+
+    if mode == "hard":
+        if vol_q["volume_quality"] and not vol_confirms and has_buy:
+            has_buy = False
+            raw_buy_blocked_by_vol = True
+    elif mode == "warn":
+        raw_buy_blocked_by_vol = bool(vol_q["volume_quality"] and not vol_confirms)
+    # mode == "score" → no bloquea, solo afecta a entry_quality_score
+
     pvi_cross_current = (
         valid_number(pvi_now, pvi_sig_now, pvi_prev, pvi_sig_prev)
         and pvi_now > pvi_sig_now
         and pvi_prev <= pvi_sig_prev
     )
 
-    if recent_crosses > 2:
-        regime = "🟡 LATERAL"
-    elif valid_number(close_now, mcg_regime_now) and close_now > mcg_regime_now:
-        regime = "🟢 ALCISTA"
+    # Régimen base
+    if valid_number(close_now, mcg_regime_now) and close_now > mcg_regime_now:
+        base_regime = "🟢 ALCISTA"
     else:
-        regime = "🔴 BAJISTA"
+        base_regime = "🔴 BAJISTA"
+
+    # Lateralidad enriquecida con CHOP
+    if recent_crosses > 2 or (valid_number(chop_now) and chop_now >= 61.8):
+        regime = "🟡 LATERAL"
+    else:
+        regime = base_regime
 
     events = []
 
     if has_buy:
         events.append(("🟢 COMPRA", buy_ago))
+
     if has_pvi_sell:
-        events.append(("🟠 VENTA 50% PVI", pvi_sell_ago))
+        label = "🟠 VENTA 50% PVI"
+        if bearish_high_volume:
+            label = "🔴 VENTA PVI FUERTE"
+        events.append((label, pvi_sell_ago))
+
     if has_mcg_sell:
-        events.append(("🟠 VENTA 50% McGINLEY", mcg_sell_ago))
+        label = "🟠 VENTA 50% McGINLEY"
+        if bearish_high_volume:
+            label = "🔴 ROTURA McGINLEY CON VOLUMEN"
+        events.append((label, mcg_sell_ago))
 
     if has_buy and (has_pvi_sell or has_mcg_sell):
         main_signal = "⚠️ MIXTA"
@@ -422,15 +829,55 @@ def analyze_technical(row):
 
     bars_min = min([e[1] for e in events], default=None)
     events_text = " · ".join([f"{name_} ({ago_txt(ago)})" for name_, ago in events])
+    freshness = signal_freshness(bars_min)
 
     dist_to_mcg_exit = np.nan
+    dist_to_mcg_exit_atr = np.nan
+
     if valid_number(close_now, mcg_exit_now) and mcg_exit_now != 0:
         dist_to_mcg_exit = close_now / mcg_exit_now - 1
 
+    if valid_number(close_now, mcg_exit_now, atr_now) and atr_now > 0:
+        dist_to_mcg_exit_atr = (close_now - mcg_exit_now) / atr_now
+
     if valid_number(pvi_now, pvi_sig_now):
         pvi_status = "POSITIVO" if pvi_now > pvi_sig_now else "NEGATIVO"
+        pvi_gap = pvi_now / pvi_sig_now - 1 if pvi_sig_now != 0 else np.nan
     else:
         pvi_status = "N/A"
+        pvi_gap = np.nan
+
+    price_below_mcg_exit = (
+        bool(close_now < mcg_exit_now)
+        if valid_number(close_now, mcg_exit_now)
+        else False
+    )
+
+    entry_score, entry_label, entry_notes = calculate_entry_quality(
+        has_buy=has_buy,
+        close_now=close_now,
+        mcg_regime_now=mcg_regime_now,
+        mcg_exit_now=mcg_exit_now,
+        recent_crosses=recent_crosses,
+        pvi_gap=pvi_gap,
+        rvol_now=rvol_now,
+        bullish_high_volume=bullish_high_volume,
+        volume_quality=vol_q["volume_quality"]
+    )
+
+    exit_score, exit_label, exit_notes = calculate_exit_pressure(
+        pvi_status=pvi_status,
+        close_now=close_now,
+        mcg_exit_now=mcg_exit_now,
+        mcg_regime_now=mcg_regime_now,
+        regime=regime,
+        recent_crosses=recent_crosses,
+        bearish_high_volume=bearish_high_volume,
+        pvi_gap=pvi_gap
+    )
+
+    technical_state = technical_state_label(regime, pvi_status, price_below_mcg_exit)
+    stop_status = stop_status_label(dist_to_mcg_exit, dist_to_mcg_exit_atr)
 
     return {
         "ticker": ticker,
@@ -439,34 +886,72 @@ def analyze_technical(row):
         "currency": currency,
         "sector": sector,
         "technical_only": bool(row["technical_only"]),
+
         "has_signal": bool(events),
         "main_signal": main_signal,
         "events_text": events_text,
+
+        "signal_freshness": freshness,
+
         "buy_ago": buy_ago,
         "pvi_sell_ago": pvi_sell_ago,
         "mcg_sell_ago": mcg_sell_ago,
         "bars_min": bars_min,
+
         "regime": regime,
+        "technical_state": technical_state,
         "recent_crosses": recent_crosses,
+
         "close": close_now,
         "mcg_regime": mcg_regime_now,
         "mcg_exit": mcg_exit_now,
         "dist_to_mcg_exit": dist_to_mcg_exit,
+        "dist_to_mcg_exit_atr": dist_to_mcg_exit_atr,
+        "stop_status": stop_status,
+
+        "atr": atr_now,
+        "chop": chop_now,
+
         "pvi": pvi_now,
         "pvi_signal": pvi_sig_now,
         "pvi_status": pvi_status,
+        "pvi_gap": pvi_gap,
         "pvi_prev": pvi_prev,
         "pvi_signal_prev": pvi_sig_prev,
         "pvi_cross_current": bool(pvi_cross_current),
         "pvi_signal_type": CONFIG.get("PVI_SIGNAL_TYPE", "EMA"),
-        "price_below_mcg_exit": bool(close_now < mcg_exit_now) if valid_number(close_now, mcg_exit_now) else False,
+
+        "rvol": rvol_now,
+        "rvol_high": bool(vol_confirms),
+        "bullish_high_volume": bool(bullish_high_volume),
+        "bearish_high_volume": bool(bearish_high_volume),
+
+        "volume_quality": vol_q["volume_quality"],
+        "volume_nonzero_pct": vol_q["volume_nonzero_pct"],
+        "volume_zero_days": vol_q["volume_zero_days"],
+        "volume_warning": vol_q["volume_warning"],
+
+        "vol_confirms": bool(vol_confirms),
+        "raw_buy_blocked_by_vol": bool(raw_buy_blocked_by_vol),
+
+        "entry_quality_score": entry_score,
+        "entry_quality_label": entry_label,
+        "entry_quality_notes": entry_notes,
+
+        "exit_pressure_score": exit_score,
+        "exit_pressure_label": exit_label,
+        "exit_pressure_notes": exit_notes,
+
+        "price_below_mcg_exit": price_below_mcg_exit,
+
         "last_date": str(df.index[-1].date()),
         "error": ""
     }
 
 
 # ============================================================
-# FUNDAMENTALES — LCrack Sovereign (Calidad + Valoración)
+# FUNDAMENTALES — CALIDAD / VALORACIÓN / CONFIANZA
+# (base Mejora B, sin tocar apenas)
 # ============================================================
 
 def safe_div(n, d):
@@ -512,7 +997,6 @@ def avg_available(values, weights=None):
 
 
 def quality_label(score):
-    """Etiqueta legible para el score de calidad de negocio."""
     if score is None or pd.isna(score):
         return "N/A"
     score = float(score)
@@ -528,7 +1012,6 @@ def quality_label(score):
 
 
 def valuation_label(score):
-    """Etiqueta legible para el score de valoración/precio."""
     if score is None or pd.isna(score):
         return "N/A"
     score = float(score)
@@ -544,10 +1027,6 @@ def valuation_label(score):
 
 
 def fundamental_profile(q_score, v_score):
-    """
-    Perfil fundamental combinado a partir del score de calidad
-    y el score de valoración.
-    """
     if q_score is None or v_score is None:
         return "—"
     if pd.isna(q_score) or pd.isna(v_score):
@@ -581,6 +1060,104 @@ def confidence_grade(score):
     return "D"
 
 
+def fundamental_trend(metrics):
+    signals = []
+
+    if valid_number(metrics.get("revenue_growth")):
+        signals.append(1 if metrics["revenue_growth"] > 0 else -1)
+
+    if valid_number(metrics.get("op_income_growth")):
+        signals.append(1 if metrics["op_income_growth"] > 0 else -1)
+
+    if valid_number(metrics.get("net_income_growth")):
+        signals.append(1 if metrics["net_income_growth"] > 0 else -1)
+
+    if not signals:
+        return "—"
+
+    avg = sum(signals) / len(signals)
+
+    if avg > 0.3:
+        return "📈 Mejorando"
+    if avg < -0.3:
+        return "📉 Deteriorando"
+    return "➡️ Estable"
+
+
+def valuation_style(sector, industry, model):
+    sector_l = str(sector or "").lower()
+    industry_l = str(industry or "").lower()
+
+    if model in ("Bank", "Insurance", "Financial"):
+        return "financial"
+
+    growth_words = [
+        "technology", "communication", "software", "semiconductor",
+        "internet", "interactive media", "biotechnology"
+    ]
+
+    defensive_words = [
+        "consumer defensive", "healthcare", "pharmaceutical",
+        "medical", "staples"
+    ]
+
+    value_cyclical_words = [
+        "energy", "utilities", "basic materials", "oil",
+        "gas", "metals", "mining"
+    ]
+
+    if any(w in sector_l or w in industry_l for w in growth_words):
+        return "growth"
+
+    if any(w in sector_l or w in industry_l for w in value_cyclical_words):
+        return "value_cyclical"
+
+    if any(w in sector_l or w in industry_l for w in defensive_words):
+        return "defensive"
+
+    return "standard"
+
+
+def valuation_score_corporate(metrics):
+    style = valuation_style(
+        metrics.get("sector"),
+        metrics.get("industry"),
+        metrics.get("fundamental_model")
+    )
+
+    if style == "growth":
+        pe_bad, pe_good = 55, 18
+        pb_bad, pb_good = 14, 2.5
+        ev_bad, ev_good = 35, 14
+        fcf_good = 0.045
+
+    elif style == "value_cyclical":
+        pe_bad, pe_good = 25, 8
+        pb_bad, pb_good = 4, 0.8
+        ev_bad, ev_good = 14, 4
+        fcf_good = 0.08
+
+    elif style == "defensive":
+        pe_bad, pe_good = 35, 12
+        pb_bad, pb_good = 7, 1.2
+        ev_bad, ev_good = 22, 8
+        fcf_good = 0.06
+
+    else:  # standard
+        pe_bad, pe_good = 40, 12
+        pb_bad, pb_good = 8, 1.5
+        ev_bad, ev_good = 25, 10
+        fcf_good = 0.06
+
+    return avg_available([
+        scale_score(metrics.get("pe"), pe_bad, pe_good),
+        scale_score(metrics.get("pb"), pb_bad, pb_good),
+        scale_score(metrics.get("ev_ebitda"), ev_bad, ev_good),
+        scale_score(metrics.get("fcf_yield"), 0.00, fcf_good),
+        scale_score(metrics.get("upside"), -0.10, 0.20),
+    ])
+
+
 def get_statement(ticker_obj, names):
     for name in names:
         try:
@@ -607,6 +1184,7 @@ def get_series(df, aliases):
                 pass
 
     aliases_low = [a.lower() for a in aliases]
+
     for idx in df.index:
         idx_low = str(idx).lower()
         if any(a in idx_low for a in aliases_low):
@@ -623,6 +1201,7 @@ def get_series(df, aliases):
 
 def get_val(df, aliases, pos=0, lookahead=4):
     s = get_series(df, aliases)
+
     if s is None or len(s) == 0:
         return np.nan
 
@@ -647,8 +1226,10 @@ def get_ttm(q_df, a_df, aliases, multiplier=4):
 
     if s is not None:
         vals = s.dropna()
+
         if len(vals) >= 4:
             return safe_float(vals.iloc[:4].sum())
+
         if len(vals) >= 1 and multiplier:
             return safe_float(vals.iloc[0] * multiplier)
 
@@ -661,6 +1242,7 @@ def statement_latest_date(*dfs):
     for df in dfs:
         if df is None or df.empty:
             continue
+
         for c in df.columns:
             try:
                 dates.append(pd.to_datetime(c).to_pydatetime().replace(tzinfo=None))
@@ -676,8 +1258,10 @@ def statement_latest_date(*dfs):
 def period_label_from_date(dt, annual=False):
     if dt is None:
         return "N/A"
+
     if annual:
         return f"FY{str(dt.year)[-2:]}"
+
     q = ((dt.month - 1) // 3) + 1
     return f"{q}Q{str(dt.year)[-2:]}"
 
@@ -693,6 +1277,7 @@ def reporting_context(q_df, a_df):
 
             if diff > 300:
                 return 1, "Annual-like", period_label_from_date(d1, annual=True), d1
+
             if diff > 150:
                 return 2, "Semiannual", period_label_from_date(d1), d1
 
@@ -705,6 +1290,7 @@ def reporting_context(q_df, a_df):
         return 4, "Quarterly/partial", period_label_from_date(latest), latest
 
     annual_latest = statement_latest_date(a_df)
+
     if annual_latest is not None:
         return 1, "Annual", period_label_from_date(annual_latest, annual=True), annual_latest
 
@@ -715,15 +1301,23 @@ def route_fundamental_model(ticker, info):
     sector = str(info.get("sector") or "")
     industry = str(info.get("industry") or "")
 
-    bank_tickers = {"JPM", "BAC", "SAN.MC", "BBVA.MC", "BNP.PA", "SAN.PA"}
-    insurance_tickers = {"ALV.DE", "MUV2.DE", "MAP.MC"}
+    bank_tickers = {
+        "JPM", "BAC", "SAN.MC", "BBVA.MC", "BNP.PA", "SAN.PA"
+    }
+
+    insurance_tickers = {
+        "ALV.DE", "MUV2.DE", "MAP.MC"
+    }
 
     if ticker.endswith("-USD") or ticker.endswith("=F"):
         return "Technical-only"
+
     if ticker in insurance_tickers or "insurance" in industry.lower():
         return "Insurance"
+
     if ticker in bank_tickers or "bank" in industry.lower() or "banks" in industry.lower():
         return "Bank"
+
     if "financial services" in sector.lower():
         return "Financial"
 
@@ -748,37 +1342,52 @@ def calculate_piotroski_v2(f_df, b_df, cf_df, prev_pos=1, multiplier=1):
     ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
     ni1 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], prev_pos)
     cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
+
     ta0 = get_val(b_df, ["Total Assets"], 0)
     ta1 = get_val(b_df, ["Total Assets"], prev_pos)
+
     ltd0 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], 0)
     ltd1 = get_val(b_df, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation", "Total Debt"], prev_pos)
+
     ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
     ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
+
     cl0 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], 0)
     cl1 = get_val(b_df, ["Current Liabilities", "Total Current Liabilities"], prev_pos)
+
     gp0 = get_val(f_df, ["Gross Profit"], 0)
     gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
+
     rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
     rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
+
     shares0 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
     shares1 = get_val(b_df, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], prev_pos)
 
     if valid_number(ni0):
         add(ni0 > 0)
+
     if valid_number(cfo0):
         add(cfo0 > 0)
+
     if valid_number(ni0, ni1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((ni0 * multiplier / ta0) > (ni1 * multiplier / ta1))
+
     if valid_number(cfo0, ni0):
         add(cfo0 > ni0)
+
     if valid_number(ltd0, ltd1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((ltd0 / ta0) < (ltd1 / ta1))
+
     if valid_number(ca0, ca1, cl0, cl1) and cl0 != 0 and cl1 != 0:
         add((ca0 / cl0) > (ca1 / cl1))
+
     if valid_number(shares0, shares1):
         add(shares0 <= shares1)
+
     if valid_number(gp0, gp1, rev0, rev1) and rev0 != 0 and rev1 != 0:
         add((gp0 / rev0) > (gp1 / rev1))
+
     if valid_number(rev0, rev1, ta0, ta1) and ta0 != 0 and ta1 != 0:
         add((rev0 * multiplier / ta0) > (rev1 * multiplier / ta1))
 
@@ -799,15 +1408,21 @@ def calculate_altman_z_v2(b_df, f_df, info, market_cap, multiplier):
         re = get_val(b_df, ["Retained Earnings"], 0)
         ebit = get_val(f_df, ["Operating Income", "EBIT"], 0)
         revenue = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
+
         total_liab = get_val(
             b_df,
             ["Total Liabilities Net Minority Interest", "Total Liab", "Total Liabilities"],
             0
         )
 
-        if not valid_number(ca): ca = 0
-        if not valid_number(cl): cl = 0
-        if not valid_number(re): re = 0
+        if not valid_number(ca):
+            ca = 0
+
+        if not valid_number(cl):
+            cl = 0
+
+        if not valid_number(re):
+            re = 0
 
         ebit = ebit * multiplier if valid_number(ebit) else np.nan
         revenue = revenue * multiplier if valid_number(revenue) else np.nan
@@ -833,58 +1448,75 @@ def calculate_beneish_m_score(f_df, b_df, cf_df, prev_pos=1):
     try:
         rev0 = get_val(f_df, ["Total Revenue", "Operating Revenue"], 0)
         rev1 = get_val(f_df, ["Total Revenue", "Operating Revenue"], prev_pos)
+
         rec0 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], 0)
         rec1 = get_val(b_df, ["Accounts Receivable", "Receivables", "Net Receivables"], prev_pos)
+
         gp0 = get_val(f_df, ["Gross Profit"], 0)
         gp1 = get_val(f_df, ["Gross Profit"], prev_pos)
+
         ca0 = get_val(b_df, ["Current Assets", "Total Current Assets"], 0)
         ca1 = get_val(b_df, ["Current Assets", "Total Current Assets"], prev_pos)
+
         ppe0 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], 0)
         ppe1 = get_val(b_df, ["Net PPE", "Property Plant Equipment", "Property Plant And Equipment Net"], prev_pos)
+
         ta0 = get_val(b_df, ["Total Assets"], 0)
         ta1 = get_val(b_df, ["Total Assets"], prev_pos)
+
         dep0 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], 0))
         dep1 = abs(get_val(cf_df, ["Depreciation", "Depreciation And Amortization"], prev_pos))
+
         sga0 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], 0)
         sga1 = get_val(f_df, ["Selling General And Administration", "Selling General Administrative"], prev_pos)
+
         debt0 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
         debt1 = get_val(b_df, ["Total Debt", "Long Term Debt", "Long Term Debt And Capital Lease Obligation"], prev_pos)
+
         ni0 = get_val(f_df, ["Net Income", "Net Income Common Stockholders"], 0)
         cfo0 = get_val(cf_df, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
 
         comps = []
 
         dsri = safe_div(safe_div(rec0, rev0), safe_div(rec1, rev1))
-        if valid_number(dsri): comps.append("dsri")
+        if valid_number(dsri):
+            comps.append("dsri")
 
         gm0 = safe_div(gp0, rev0)
         gm1 = safe_div(gp1, rev1)
         gmi = safe_div(gm1, gm0)
-        if valid_number(gmi): comps.append("gmi")
+        if valid_number(gmi):
+            comps.append("gmi")
 
         aqi = safe_div(
             1 - safe_div(ca0 + ppe0, ta0),
             1 - safe_div(ca1 + ppe1, ta1)
         )
-        if valid_number(aqi): comps.append("aqi")
+        if valid_number(aqi):
+            comps.append("aqi")
 
         sgi = safe_div(rev0, rev1)
-        if valid_number(sgi): comps.append("sgi")
+        if valid_number(sgi):
+            comps.append("sgi")
 
         depi = safe_div(
             safe_div(dep1, dep1 + ppe1),
             safe_div(dep0, dep0 + ppe0)
         )
-        if valid_number(depi): comps.append("depi")
+        if valid_number(depi):
+            comps.append("depi")
 
         sgai = safe_div(safe_div(sga0, rev0), safe_div(sga1, rev1))
-        if valid_number(sgai): comps.append("sgai")
+        if valid_number(sgai):
+            comps.append("sgai")
 
         lvgi = safe_div(safe_div(debt0, ta0), safe_div(debt1, ta1))
-        if valid_number(lvgi): comps.append("lvgi")
+        if valid_number(lvgi):
+            comps.append("lvgi")
 
         tata = safe_div(ni0 - cfo0, ta0)
-        if valid_number(tata): comps.append("tata")
+        if valid_number(tata):
+            comps.append("tata")
 
         if len(comps) < 5:
             return np.nan
@@ -928,6 +1560,7 @@ def growth_rate(df, aliases, prev_pos=4):
 
 def consistency_score(f_df):
     s = get_series(f_df, ["Net Income", "Net Income Common Stockholders"])
+
     if s is None:
         return None
 
@@ -970,8 +1603,10 @@ def compute_confidence(model, latest_date, q_df, a_df, metrics):
     coverage = available / len(expected) if expected else 0
 
     freshness_points = 0
+
     if latest_date is not None:
         age = (datetime.now().replace(tzinfo=None) - pd.to_datetime(latest_date).replace(tzinfo=None)).days
+
         if age <= 150:
             freshness_points = 15
         elif age <= 270:
@@ -980,6 +1615,7 @@ def compute_confidence(model, latest_date, q_df, a_df, metrics):
             freshness_points = 5
 
     history_points = 0
+
     try:
         q_cols = len(q_df.columns) if q_df is not None and not q_df.empty else 0
         a_cols = len(a_df.columns) if a_df is not None and not a_df.empty else 0
@@ -997,16 +1633,7 @@ def compute_confidence(model, latest_date, q_df, a_df, metrics):
     return confidence, confidence_grade(confidence), available, len(expected)
 
 
-# ============================================================
-# SCORING: dos ejes separados — Calidad y Valoración
-# ============================================================
-
 def score_quality_axis(sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk):
-    """
-    Eje de CALIDAD de negocio.
-    Pesos: calidad 30% · caja 25% · solvencia 20% · crecimiento 15% · riesgo 10%.
-    NO incluye valoración.
-    """
     return avg_available(
         [sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk],
         weights=[30, 25, 20, 15, 10]
@@ -1014,10 +1641,6 @@ def score_quality_axis(sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk
 
 
 def score_corporate(metrics):
-    """
-    Calcula los sub-scores para modelo corporativo.
-    Devuelve: sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
-    """
     sub_quality = avg_available([
         scale_score(metrics.get("roic"), 0.05, 0.20),
         scale_score(metrics.get("op_margin"), 0.05, 0.25),
@@ -1045,15 +1668,10 @@ def score_corporate(metrics):
         metrics.get("consistency_score"),
     ])
 
-    sub_valuation = avg_available([
-        scale_score(metrics.get("pe"), 40, 12),
-        scale_score(metrics.get("pb"), 8, 1.5),
-        scale_score(metrics.get("ev_ebitda"), 25, 10),
-        scale_score(metrics.get("fcf_yield"), 0.00, 0.06),
-        scale_score(metrics.get("upside"), -0.10, 0.20),
-    ])
+    sub_valuation = valuation_score_corporate(metrics)
 
     beneish = metrics.get("beneish_m")
+
     if valid_number(beneish):
         if beneish > -1.78:
             beneish_score = 20
@@ -1076,15 +1694,12 @@ def score_corporate(metrics):
 
 
 def score_financial(metrics, model):
-    """
-    Calcula los sub-scores para modelos financieros (Bank, Insurance, Financial).
-    Devuelve: sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk
-    """
     roe = metrics.get("roe")
     roa = metrics.get("roa")
     pb = metrics.get("pb")
 
     roe_pb = np.nan
+
     if valid_number(roe, pb) and pb > 0:
         roe_pb = roe / pb
 
@@ -1119,6 +1734,7 @@ def score_financial(metrics, model):
     ])
 
     beneish = metrics.get("beneish_m")
+
     if valid_number(beneish):
         if beneish > -1.78:
             beneish_score = 30
@@ -1184,6 +1800,7 @@ def get_fundamental_raw(ticker):
 
         target = safe_float(info.get("targetMeanPrice"))
         upside = np.nan
+
         if valid_number(price, target) and price > 0 and target > 0:
             upside = target / price - 1
 
@@ -1195,6 +1812,7 @@ def get_fundamental_raw(ticker):
         capex_ttm = get_ttm(cf_q, cf_a, ["Capital Expenditure", "Capital Expenditures"], multiplier)
 
         fcf_ttm = np.nan
+
         if valid_number(cfo_ttm, capex_ttm):
             fcf_ttm = cfo_ttm + capex_ttm
 
@@ -1203,6 +1821,7 @@ def get_fundamental_raw(ticker):
         interest_expense_ttm = get_ttm(is_q, is_a, ["Interest Expense", "Interest Expense Non Operating"], multiplier)
 
         ebitda_ttm = get_ttm(is_q, is_a, ["EBITDA", "Normalized EBITDA"], multiplier)
+
         if pd.isna(ebitda_ttm):
             ebitda_ttm = safe_float(info.get("ebitda"))
 
@@ -1245,15 +1864,22 @@ def get_fundamental_raw(ticker):
 
         shares0 = get_val(bs_ref, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], 0)
         shares1 = get_val(bs_ref, ["Ordinary Shares Number", "Share Issued", "Common Stock Shares Outstanding"], prev_pos)
-        shares_growth = safe_div(shares0, shares1) - 1 if valid_number(shares0, shares1) and shares1 != 0 else np.nan
+
+        shares_growth = (
+            safe_div(shares0, shares1) - 1
+            if valid_number(shares0, shares1) and shares1 != 0
+            else np.nan
+        )
 
         tax_rate = 0.21
+
         if valid_number(tax_ttm, pretax_ttm) and pretax_ttm > 0:
             tax_rate = np.clip(tax_ttm / pretax_ttm, 0, 0.35)
 
         nopat = op_income_ttm * (1 - tax_rate) if valid_number(op_income_ttm) else np.nan
 
         invested_capital = np.nan
+
         if valid_number(equity, total_debt):
             invested_capital = equity + total_debt - cash
 
@@ -1269,10 +1895,10 @@ def get_fundamental_raw(ticker):
         fcf_yield = safe_div(fcf_ttm, market_cap)
 
         cash_quality = safe_div(cfo_ttm, net_income_ttm)
-
         current_ratio = safe_div(current_assets, current_liabilities)
 
         interest_coverage = np.nan
+
         if valid_number(op_income_ttm, interest_expense_ttm):
             if abs(interest_expense_ttm) < 1e-9:
                 interest_coverage = 10
@@ -1280,19 +1906,23 @@ def get_fundamental_raw(ticker):
                 interest_coverage = op_income_ttm / abs(interest_expense_ttm)
 
         net_debt_ebitda = np.nan
+
         if valid_number(total_debt, cash, ebitda_ttm) and ebitda_ttm > 0:
             net_debt_ebitda = (total_debt - cash) / ebitda_ttm
 
         pb = safe_float(info.get("priceToBook"))
         pe = safe_float(info.get("trailingPE"))
+
         if pd.isna(pe):
             pe = safe_float(info.get("forwardPE"))
 
         ps = safe_float(info.get("priceToSalesTrailing12Months"))
+
         if pd.isna(ps) and valid_number(market_cap, revenue_ttm) and revenue_ttm > 0:
             ps = market_cap / revenue_ttm
 
         ev_ebitda = safe_float(info.get("enterpriseToEbitda"))
+
         if pd.isna(ev_ebitda):
             enterprise_value = safe_float(info.get("enterpriseValue"))
             if valid_number(enterprise_value, ebitda_ttm) and ebitda_ttm > 0:
@@ -1305,43 +1935,78 @@ def get_fundamental_raw(ticker):
         piotroski = calculate_piotroski_v2(p_f, p_b, p_cf, prev_pos=prev_pos, multiplier=p_mult)
 
         altman_z = np.nan
+
         if model == "Corporate":
-            altman_z = calculate_altman_z_v2(bs_ref, is_q if not is_q.empty else is_a, info, market_cap, multiplier)
+            altman_z = calculate_altman_z_v2(
+                bs_ref,
+                is_q if not is_q.empty else is_a,
+                info,
+                market_cap,
+                multiplier
+            )
 
         beneish_m = calculate_beneish_m_score(p_f, p_b, p_cf, prev_pos=prev_pos)
-
         consistency = consistency_score(is_q if not is_q.empty else is_a)
 
-        # ── Métricas brutas para scoring ──────────────────────────────────────
         raw_metrics = {
-            "roic": roic, "op_margin": op_margin, "gross_margin": gross_margin,
-            "piotroski": piotroski, "cash_quality": cash_quality,
-            "fcf_margin": fcf_margin, "cfo_ttm": cfo_ttm, "fcf_ttm": fcf_ttm,
-            "altman_z": altman_z, "net_debt_ebitda": net_debt_ebitda,
-            "interest_coverage": interest_coverage, "current_ratio": current_ratio,
-            "revenue_growth": revenue_growth, "op_income_growth": op_income_growth,
-            "net_income_growth": net_income_growth, "consistency_score": consistency,
-            "pe": pe, "pb": pb, "ev_ebitda": ev_ebitda,
-            "fcf_yield": fcf_yield, "upside": upside,
-            "beneish_m": beneish_m, "shares_growth": shares_growth,
-            "roe": roe, "roa": roa, "equity_assets": equity_assets,
+            "ticker": ticker,
+            "sector": sector,
+            "industry": industry,
+            "fundamental_model": model,
+
+            "revenue_ttm": revenue_ttm,
+            "op_income_ttm": op_income_ttm,
+            "net_income_ttm": net_income_ttm,
+            "cfo_ttm": cfo_ttm,
+            "fcf_ttm": fcf_ttm,
+
+            "total_assets": total_assets,
+            "equity": equity,
+            "total_debt": total_debt,
+
+            "roic": roic,
+            "roe": roe,
+            "roa": roa,
+            "equity_assets": equity_assets,
             "debt_equity": debt_equity,
-            # para compute_confidence
-            "revenue_ttm": revenue_ttm, "op_income_ttm": op_income_ttm,
-            "net_income_ttm": net_income_ttm, "total_assets": total_assets,
-            "equity": equity, "total_debt": total_debt,
+
+            "gross_margin": gross_margin,
+            "op_margin": op_margin,
+            "fcf_margin": fcf_margin,
+            "fcf_yield": fcf_yield,
+            "cash_quality": cash_quality,
+            "current_ratio": current_ratio,
+            "interest_coverage": interest_coverage,
+            "net_debt_ebitda": net_debt_ebitda,
+
+            "pb": pb,
+            "pe": pe,
+            "ps": ps,
+            "ev_ebitda": ev_ebitda,
+            "upside": upside,
+
+            "revenue_growth": revenue_growth,
+            "op_income_growth": op_income_growth,
+            "net_income_growth": net_income_growth,
+            "shares_growth": shares_growth,
+
+            "piotroski": piotroski,
+            "altman_z": altman_z,
+            "beneish_m": beneish_m,
+            "consistency_score": consistency,
         }
 
-        # ── Confianza ─────────────────────────────────────────────────────────
         conf_score, conf_grade, available_fields, expected_fields = compute_confidence(
-            model, latest_date, is_q, is_a, raw_metrics
+            model,
+            latest_date,
+            is_q,
+            is_a,
+            raw_metrics
         )
 
-        # Descartamos datos demasiado pobres
         if conf_grade == "D":
             return None
 
-        # ── Sub-scores por modelo ─────────────────────────────────────────────
         if model == "Corporate":
             sub_quality, sub_cash, sub_solvency, sub_growth, sub_valuation, sub_risk = score_corporate(raw_metrics)
             model_note = "Modelo corporativo"
@@ -1351,11 +2016,7 @@ def get_fundamental_raw(ticker):
             model_note = f"Modelo {model}"
             not_applicable = "Altman-Z industrial, Current Ratio industrial, Debt/EBITDA industrial."
 
-        # ── Eje 1: Calidad de negocio ─────────────────────────────────────────
-        # Calidad = calidad op. 30% + caja 25% + solvencia 20% + crecimiento 15% + riesgo 10%
         q_score = score_quality_axis(sub_quality, sub_cash, sub_solvency, sub_growth, sub_risk)
-
-        # ── Eje 2: Valoración / Precio-Fundamentales ──────────────────────────
         v_score = sub_valuation
 
         if q_score is None and v_score is None:
@@ -1363,34 +2024,42 @@ def get_fundamental_raw(ticker):
 
         if q_score is not None:
             q_score = float(np.clip(q_score, 0, 100))
+
         if v_score is not None:
             v_score = float(np.clip(v_score, 0, 100))
 
         q_lbl = quality_label(q_score)
         v_lbl = valuation_label(v_score)
         profile = fundamental_profile(q_score, v_score)
+        ftrend = fundamental_trend(raw_metrics)
 
-        # ── Red flags ─────────────────────────────────────────────────────────
         red_flags = []
 
         if valid_number(beneish_m) and beneish_m > -1.78:
             red_flags.append("Beneish sospechoso")
+
         if model == "Corporate" and valid_number(altman_z) and altman_z < 1.8:
             red_flags.append("Altman peligro")
+
         if valid_number(net_debt_ebitda) and net_debt_ebitda > 4:
             red_flags.append("Deuda alta")
+
         if valid_number(fcf_ttm) and fcf_ttm < 0:
             red_flags.append("FCF negativo")
+
         if valid_number(shares_growth) and shares_growth > 0.05:
             red_flags.append("Dilución alta")
 
-        # ── Resultado final ───────────────────────────────────────────────────
-        result = {
+        if conf_grade == "C":
+            red_flags.append("Cobertura limitada")
+
+        return {
             "ticker": ticker,
             "name": name,
             "sector": sector,
             "industry": industry,
             "currency": currency,
+
             "fundamental_model": model,
             "period_label": period_label,
             "latest_report_date": str(pd.to_datetime(latest_date).date()) if latest_date is not None else None,
@@ -1445,21 +2114,22 @@ def get_fundamental_raw(ticker):
             "beneish_m": beneish_m,
             "consistency_score": consistency,
 
-            # ── Los dos ejes protagonistas ──────────────────────────────────
             "has_fundamentals": True,
+
             "quality_score": q_score,
             "quality_label": q_lbl,
+
             "valuation_score": v_score,
             "valuation_label": v_lbl,
-            "fundamental_profile": profile,
 
-            # ── Confianza ───────────────────────────────────────────────────
+            "fundamental_profile": profile,
+            "fundamental_trend": ftrend,
+
             "confidence_score": conf_score,
             "confidence_grade": conf_grade,
             "available_fields": available_fields,
             "expected_fields": expected_fields,
 
-            # ── Sub-scores detalle ──────────────────────────────────────────
             "score_quality": sub_quality,
             "score_cash": sub_cash,
             "score_solvency": sub_solvency,
@@ -1467,12 +2137,12 @@ def get_fundamental_raw(ticker):
             "score_valuation": sub_valuation,
             "score_risk": sub_risk,
 
+            "valuation_style": valuation_style(sector, industry, model),
+
             "red_flags": ", ".join(red_flags) if red_flags else "",
             "model_note": model_note,
             "not_applicable": not_applicable,
         }
-
-        return result
 
     except Exception:
         return None
@@ -1490,16 +2160,18 @@ def add_fundamentals(assets_df, universe_df):
 
         for fut in as_completed(futures):
             ticker = futures[fut]
+
             try:
                 raw = fut.result()
+
                 if raw:
                     fund_rows.append(raw)
                     print(
                         f"   ✅ {ticker} · "
                         f"Calidad {raw.get('quality_score', 0):.0f} ({raw.get('quality_label','—')}) · "
-                        f"Valoración {raw.get('valuation_score', 0):.0f} ({raw.get('valuation_label','—')}) · "
+                        f"Val {raw.get('valuation_score', 0):.0f} ({raw.get('valuation_label','—')}) · "
                         f"Conf {raw.get('confidence_grade','—')} · "
-                        f"{raw.get('fundamental_profile','—')}"
+                        f"{raw.get('fundamental_trend','—')}"
                     )
             except Exception:
                 pass
@@ -1510,16 +2182,13 @@ def add_fundamentals(assets_df, universe_df):
 
     fund_df = pd.DataFrame(fund_rows)
 
-    # ── Cuartiles sobre quality_score (no sobre score mezclado) ───────────────
     fund_df["quality_percentile"] = np.nan
     valid = fund_df["quality_score"].notna()
 
     if valid.sum() > 0:
-        # Percentil global
         global_pct = fund_df.loc[valid, "quality_score"].rank(pct=True)
         fund_df.loc[valid, "quality_percentile"] = global_pct
 
-        # Intento 1: percentil por modelo + sector si muestra suficiente
         try:
             group_cols = ["fundamental_model", "sector"]
             group_sizes = fund_df.groupby(group_cols)["ticker"].transform("count")
@@ -1529,7 +2198,6 @@ def add_fundamentals(assets_df, universe_df):
         except Exception:
             pass
 
-        # Intento 2: percentil por modelo
         try:
             group_sizes_model = fund_df.groupby("fundamental_model")["ticker"].transform("count")
             pct_model = fund_df.groupby("fundamental_model")["quality_score"].rank(pct=True)
@@ -1539,10 +2207,14 @@ def add_fundamentals(assets_df, universe_df):
             pass
 
     def q_from_pct(p):
-        if pd.isna(p): return "N/A"
-        if p >= 0.75: return "Q1"
-        if p >= 0.50: return "Q2"
-        if p >= 0.25: return "Q3"
+        if pd.isna(p):
+            return "N/A"
+        if p >= 0.75:
+            return "Q1"
+        if p >= 0.50:
+            return "Q2"
+        if p >= 0.25:
+            return "Q3"
         return "Q4"
 
     fund_df["quality_q"] = fund_df["quality_percentile"].apply(q_from_pct)
@@ -1554,7 +2226,7 @@ def add_fundamentals(assets_df, universe_df):
 
 
 # ============================================================
-# MACRO + FX
+# MACRO + FX (base Mejora B)
 # ============================================================
 
 def yf_close_series(ticker, period="1y"):
@@ -1566,10 +2238,14 @@ def yf_close_series(ticker, period="1y"):
             progress=False,
             threads=False
         )
+
         df = flatten_yf(df)
+
         if df.empty or "Close" not in df.columns:
             return None
+
         return df["Close"].dropna()
+
     except Exception:
         return None
 
@@ -1577,11 +2253,15 @@ def yf_close_series(ticker, period="1y"):
 def fetch_fred(series_id, start, end):
     if web is None:
         return None
+
     try:
         df = web.DataReader(series_id, "fred", start, end)
+
         if df.empty:
             return None
+
         return df[series_id].ffill().bfill()
+
     except Exception:
         return None
 
@@ -1615,12 +2295,17 @@ def macro_context():
     for name, series in data.items():
         if series is None or len(series.dropna()) < 21:
             rows.append({
-                "id": name, "value": None, "roc5": None, "roc20": None,
-                "impact": 0.0, "diag": "🟡 DATA_DELAY"
+                "id": name,
+                "value": None,
+                "roc5": None,
+                "roc20": None,
+                "impact": 0.0,
+                "diag": "🟡 DATA_DELAY"
             })
             continue
 
         s = series.dropna()
+
         v_now = safe_float(s.iloc[-1])
         v_prev_5 = safe_float(s.iloc[-6])
         v_prev_20 = safe_float(s.iloc[-21])
@@ -1659,6 +2344,7 @@ def macro_context():
 
         elif name == "BRENT":
             p80 = s.tail(252).quantile(0.80) if len(s) >= 100 else s.quantile(0.80)
+
             if v_now > p80 and roc5 > 0.03:
                 impact, diag = -3.5, "⛽ Brent caro/acelerando"
             elif roc5 > 0.06:
@@ -1679,8 +2365,12 @@ def macro_context():
         score += impact
 
         rows.append({
-            "id": name, "value": v_now, "roc5": roc5,
-            "roc20": roc20, "impact": impact, "diag": diag
+            "id": name,
+            "value": v_now,
+            "roc5": roc5,
+            "roc20": roc20,
+            "impact": impact,
+            "diag": diag
         })
 
     if score >= 4:
@@ -1690,7 +2380,13 @@ def macro_context():
     else:
         label = "🔴 CAUTELOSO"
 
-    return {"score": score, "label": label, "rows": rows}
+    return {
+        "score": score,
+        "label": label,
+        "warning": bool(score < 0),
+        "warning_text": "⚠️ Macro cautelosa" if score < 0 else "",
+        "rows": rows
+    }
 
 
 def currency_context():
@@ -1698,8 +2394,12 @@ def currency_context():
 
     if s is None or len(s) < 60:
         return {
-            "label": "🟡 DATA_DELAY", "score": 0.0, "eurusd": None,
-            "roc5": None, "roc20": None, "sma50": None,
+            "label": "🟡 DATA_DELAY",
+            "score": 0.0,
+            "eurusd": None,
+            "roc5": None,
+            "roc20": None,
+            "sma50": None,
             "diag": "Sin datos suficientes de EUR/USD"
         }
 
@@ -1712,8 +2412,10 @@ def currency_context():
 
     if roc20 > 0.015:
         score -= 2.0
+
     if eurusd > sma50 and roc5 > 0:
         score -= 1.0
+
     if roc20 < -0.015:
         score += 1.5
 
@@ -1731,13 +2433,18 @@ def currency_context():
         diag = "Sin presión clara por divisa"
 
     return {
-        "label": label, "score": score, "eurusd": eurusd,
-        "roc5": roc5, "roc20": roc20, "sma50": sma50, "diag": diag
+        "label": label,
+        "score": score,
+        "eurusd": eurusd,
+        "roc5": roc5,
+        "roc20": roc20,
+        "sma50": sma50,
+        "diag": diag
     }
 
 
 # ============================================================
-# HTML
+# HTML / FRONTEND (base Mejora B + stop_status / bloqueo vol)
 # ============================================================
 
 INDEX_HTML = r"""
@@ -1752,7 +2459,6 @@ INDEX_HTML = r"""
 :root {
   --bg: #020617;
   --panel: #0f172a;
-  --panel2: #111827;
   --border: rgba(148,163,184,.22);
   --text: #e5e7eb;
   --muted: #94a3b8;
@@ -1776,30 +2482,73 @@ body {
   color: var(--text);
 }
 
-.container { max-width: 1600px; margin: auto; padding: 28px; }
+.container {
+  max-width: 1650px;
+  margin: auto;
+  padding: 28px;
+}
 
-h1 { font-size: 38px; margin: 0; letter-spacing: -.03em; }
+h1 {
+  font-size: 38px;
+  margin: 0;
+  letter-spacing: -.03em;
+}
 
-.subtitle { color: var(--muted); margin-top: 8px; margin-bottom: 24px; }
+.subtitle {
+  color: var(--muted);
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
 
-.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
-.grid2 { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-bottom: 18px; }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.grid2 {
+  display: grid;
+  grid-template-columns: 1.1fr .9fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
 
 .card {
-  background: rgba(15,23,42,.92);
+  background: rgba(15, 23, 42, .92);
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 18px;
   box-shadow: 0 10px 35px rgba(0,0,0,.25);
 }
 
-.card h2 { margin-top: 0; }
+.metric-title {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
 
-.metric-title { color: var(--muted); font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
-.metric-big { font-size: 28px; font-weight: 950; margin-top: 8px; }
-.small { font-size: 12px; color: var(--muted); margin-top: 5px; }
+.metric-big {
+  font-size: 28px;
+  font-weight: 950;
+  margin-top: 8px;
+}
 
-.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 22px 0; }
+.small {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.35;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 22px 0;
+}
 
 .tab {
   cursor: pointer;
@@ -1820,7 +2569,13 @@ h1 { font-size: 38px; margin: 0; letter-spacing: -.03em; }
 .section { display: none; }
 .section.active { display: block; }
 
-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 14px; border: 1px solid var(--border); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+}
 
 th {
   background: rgba(30,41,59,.96);
@@ -1834,7 +2589,12 @@ th {
   top: 0;
 }
 
-td { border-top: 1px solid rgba(148,163,184,.13); padding: 11px; vertical-align: top; }
+td {
+  border-top: 1px solid rgba(148,163,184,.13);
+  padding: 11px;
+  vertical-align: top;
+}
+
 tr:hover { background: rgba(30,41,59,.5); }
 
 .badge {
@@ -1845,25 +2605,36 @@ tr:hover { background: rgba(30,41,59,.5); }
   font-weight: 900;
   border: 1px solid var(--border);
   white-space: nowrap;
+  margin: 1px;
 }
 
-.buy   { color: var(--green);  background: rgba(34,197,94,.15);   border-color: rgba(34,197,94,.35); }
-.sell  { color: var(--red);    background: rgba(239,68,68,.15);   border-color: rgba(239,68,68,.35); }
+.buy { color: var(--green); background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.35); }
+.sell { color: var(--red); background: rgba(239,68,68,.15); border-color: rgba(239,68,68,.35); }
 .partial { color: var(--yellow); background: rgba(245,158,11,.15); border-color: rgba(245,158,11,.35); }
-.neutral { color: #cbd5e1;     background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
-.mixed { color: var(--purple); background: rgba(168,85,247,.15);  border-color: rgba(168,85,247,.35); }
-.qbadge { color: var(--blue);  background: rgba(59,130,246,.15);  border-color: rgba(59,130,246,.35); }
-.vbadge { color: var(--orange);background: rgba(251,146,60,.15);  border-color: rgba(251,146,60,.35); }
-.profbadge { color: var(--green); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.25); }
+.neutral { color: #cbd5e1; background: rgba(148,163,184,.12); border-color: rgba(148,163,184,.28); }
+.mixed { color: var(--purple); background: rgba(168,85,247,.15); border-color: rgba(168,85,247,.35); }
+.qbadge { color: var(--blue); background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.35); }
+.vbadge { color: var(--orange); background: rgba(251,146,60,.15); border-color: rgba(251,146,60,.35); }
+.warnbadge { color: var(--yellow); background: rgba(245,158,11,.14); border-color: rgba(245,158,11,.35); }
 
-/* Barra de score */
-.score-bar-wrap { width: 100%; height: 6px; background: rgba(148,163,184,.2); border-radius: 3px; margin-top: 4px; }
-.score-bar { height: 6px; border-radius: 3px; }
+.ticker {
+  font-weight: 950;
+  font-size: 16px;
+}
 
-.ticker { font-weight: 950; font-size: 16px; }
-.name   { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.name {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
 
-.controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+.controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  align-items: center;
+}
 
 input, select, button {
   border: 1px solid var(--border);
@@ -1873,18 +2644,56 @@ input, select, button {
   padding: 10px;
 }
 
-button { cursor: pointer; font-weight: 800; }
-button.primary { background: rgba(37,99,235,.42); border-color: rgba(59,130,246,.55); color: white; }
-button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,113,.4); color: var(--red); }
+button {
+  cursor: pointer;
+  font-weight: 800;
+}
 
-.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto; gap: 8px; margin-bottom: 14px; }
+button.primary {
+  background: rgba(37,99,235,.42);
+  border-color: rgba(59,130,246,.55);
+  color: white;
+}
+
+button.danger {
+  background: rgba(220,38,38,.22);
+  border-color: rgba(248,113,113,.4);
+  color: var(--red);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 2fr auto;
+  gap: 8px;
+  margin-bottom: 14px;
+}
 
 .warning { color: var(--yellow); }
 
-.footer { color: var(--muted); margin-top: 28px; font-size: 12px; }
+.score-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: rgba(148,163,184,.2);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 5px;
+}
+
+.score-bar {
+  height: 6px;
+  border-radius: 999px;
+}
+
+.footer {
+  color: var(--muted);
+  margin-top: 28px;
+  font-size: 12px;
+}
 
 @media (max-width: 900px) {
-  .grid, .grid2, .form-grid { grid-template-columns: 1fr; }
+  .grid, .grid2, .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 </head>
@@ -1904,7 +2713,6 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
     <button class="tab" onclick="showTab('rules', event)">📘 Reglas</button>
   </div>
 
-  <!-- ═══════════════════ GLOBAL ═══════════════════ -->
   <section id="global" class="section active">
     <div class="grid2">
       <div class="card">
@@ -1918,7 +2726,6 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
     </div>
   </section>
 
-  <!-- ═══════════════════ SEÑALES ══════════════════ -->
   <section id="signals" class="section">
     <div class="card">
       <h2>🎯 Señales recientes</h2>
@@ -1941,7 +2748,6 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
     </div>
   </section>
 
-  <!-- ═══════════════════ UNIVERSO ═════════════════ -->
   <section id="universe" class="section">
     <div class="card">
       <h2>📡 Universo completo</h2>
@@ -1964,28 +2770,31 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
 
         <select id="fundQualityFilter" onchange="renderUniverse()">
           <option value="">Calidad: todas</option>
-          <option value="85">Excelente (85+)</option>
-          <option value="75">Muy buena (75+)</option>
-          <option value="65">Buena (65+)</option>
-          <option value="50">Media (50+)</option>
+          <option value="85">Excelente 85+</option>
+          <option value="75">Muy buena 75+</option>
+          <option value="65">Buena 65+</option>
+          <option value="50">Media 50+</option>
         </select>
 
         <select id="fundValuationFilter" onchange="renderUniverse()">
           <option value="">Precio/Fund.: todos</option>
-          <option value="80">Muy barata (80+)</option>
-          <option value="65">Barata (65+)</option>
-          <option value="45">Razonable (45+)</option>
+          <option value="80">Muy barata 80+</option>
+          <option value="65">Barata 65+</option>
+          <option value="45">Razonable 45+</option>
         </select>
 
-        <select id="fundProfileFilter" onchange="renderUniverse()">
-          <option value="">Todos los perfiles</option>
-          <option value="Calidad con descuento">🟢 Calidad con descuento</option>
-          <option value="Calidad razonable">✅ Calidad razonable</option>
-          <option value="Calidad cara">💎 Calidad cara</option>
-          <option value="Value especulativo">🟡 Value especulativo</option>
-          <option value="Value trap">🪤 Value trap</option>
-          <option value="Débil y cara">🔴 Débil y cara</option>
-          <option value="Equilibrado">⚖️ Equilibrado</option>
+        <select id="entryQualityFilter" onchange="renderUniverse()">
+          <option value="">Entrada: todas</option>
+          <option value="85">Entrada A</option>
+          <option value="70">Entrada B+</option>
+          <option value="55">Entrada C+</option>
+        </select>
+
+        <select id="exitPressureFilter" onchange="renderUniverse()">
+          <option value="">Presión salida: todas</option>
+          <option value="25">Vigilar+</option>
+          <option value="50">Reducir+</option>
+          <option value="75">Salida fuerte</option>
         </select>
 
         <select id="fundQFilter" onchange="renderUniverse()">
@@ -1996,7 +2805,7 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
           <option value="Q4">Q4 ⚠️</option>
         </select>
 
-        <label class="small" style="display:flex;align-items:center;gap:6px;">
+        <label class="small">
           <input id="onlyFundamentals" type="checkbox" onchange="renderUniverse()">
           Solo con fundamentales
         </label>
@@ -2005,11 +2814,12 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
     </div>
   </section>
 
-  <!-- ═══════════════════ CARTERA ══════════════════ -->
   <section id="portfolio" class="section">
     <div class="card">
       <h2>💼 Mi cartera privada</h2>
-      <p class="small">Tus posiciones se guardan solo en este navegador mediante localStorage. No se suben a GitHub.</p>
+      <p class="small">
+        Tus posiciones se guardan solo en este navegador mediante localStorage.
+      </p>
 
       <div class="form-grid">
         <input id="pfTicker" placeholder="Ticker, ej. NVDA">
@@ -2031,31 +2841,32 @@ button.danger  { background: rgba(220,38,38,.22);  border-color: rgba(248,113,11
     </div>
   </section>
 
-  <!-- ═══════════════════ REGLAS ════════════════════ -->
   <section id="rules" class="section">
     <div class="card">
       <h2>📘 Reglas del sistema</h2>
-      <p><b>Compra:</b> PVI cruza su EMA de abajo hacia arriba en las últimas 5 velas.</p>
-      <p><b>Venta 50% PVI:</b> PVI cruza su EMA de arriba hacia abajo en las últimas 5 velas.</p>
-      <p><b>Venta 50% McGinley:</b> el precio cruza McGinley de salida de arriba hacia abajo.</p>
-      <p><b>Venta 100%:</b> se activan las dos patas de salida simultáneamente.</p>
-      <p><b>Lateral:</b> demasiados cruces recientes alrededor de McGinley de régimen.</p>
 
-      <h3>Fundamentales: dos ejes independientes</h3>
-      <p><b>Calidad</b> (0-100): mide la calidad del negocio → rentabilidad, caja, solvencia, crecimiento y riesgo contable. <b>No incluye valoración.</b></p>
-      <p>Escala: Excelente ≥85 · Muy buena ≥75 · Buena ≥65 · Media ≥50 · Débil &lt;50</p>
-      <p><b>Precio/Fundamentales</b> (0-100): mide si el precio de mercado es atractivo o exigente respecto a los fundamentales.</p>
-      <p>Escala: Muy barata ≥80 · Barata ≥65 · Razonable ≥45 · Cara ≥25 · Muy cara &lt;25</p>
-      <p><b>Perfil fundamental:</b> combinación de calidad y valoración en una etiqueta interpretable.</p>
-      <p><b>Confianza A/B/C:</b> fiabilidad del dato (cobertura, frescura, historial). Datos con confianza D se descartan.</p>
-      <p><b>Q calidad:</b> cuartil de calidad dentro del universo analizado.</p>
-      <p><b>Macro y EUR/USD:</b> contexto informativo; no bloquean señales técnicas.</p>
+      <h3>Técnico</h3>
+      <p><b>Compra:</b> PVI cruza su EMA120 de abajo hacia arriba.</p>
+      <p><b>Venta 50% PVI:</b> PVI cruza su EMA120 de arriba hacia abajo.</p>
+      <p><b>Venta 50% McGinley:</b> precio cruza McGinley de salida hacia abajo.</p>
+      <p><b>Venta 100%:</b> PVI negativo + precio bajo McGinley salida.</p>
+      <p><b>RVOL alto:</b> volumen relativo ≥ 1.5x. En entradas suma calidad. En salidas agrava la presión si es bajista.</p>
+      <p><b>Presión de salida:</b> estado persistente, aunque la señal reciente ya haya caducado.</p>
+      <p><b>Calidad de entrada:</b> combina PVI, tendencia McGinley, lateralidad, volumen y gap PVI.</p>
+      <p><b>Stop:</b> distancia al McGinley de salida en % y en ATR (MUY CERCA / AJUSTADO / HOLGADO / LEJANO).</p>
+
+      <h3>Fundamentales</h3>
+      <p><b>Calidad:</b> rentabilidad, caja, solvencia, crecimiento y riesgo contable.</p>
+      <p><b>Precio/Fundamentales:</b> valoración separada, con baremos sectoriales aproximados.</p>
+      <p><b>Confianza:</b> cobertura, frescura e historial de datos.</p>
+      <p><b>Tendencia fundamental:</b> si ingresos, operativo y beneficio mejoran o se deterioran.</p>
+
       <p class="warning"><b>Aviso:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
     </div>
   </section>
 
   <div class="footer">
-    LCrack Sovereign · Datos vía yfinance / FRED / Fear & Greed · Actualización automática vía GitHub Actions.
+    LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed.
   </div>
 </div>
 
@@ -2065,7 +2876,6 @@ let signals = [];
 let summary = {};
 let portfolio = JSON.parse(localStorage.getItem("sovereign_portfolio") || "[]");
 
-// ── Utilidades ──────────────────────────────────────────────────────────────
 function fmtNum(x, d=2) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
   return Number(x).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d});
@@ -2073,14 +2883,14 @@ function fmtNum(x, d=2) {
 
 function fmtPct(x, d=1) {
   if (x === null || x === undefined || Number.isNaN(Number(x))) return "—";
-  return (Number(x)*100).toLocaleString("es-ES",{maximumFractionDigits:d,minimumFractionDigits:d})+"%";
+  return (Number(x) * 100).toLocaleString("es-ES", {maximumFractionDigits:d, minimumFractionDigits:d}) + "%";
 }
 
 function clsFor(text) {
   text = String(text || "");
-  if (text.includes("COMPRA") || text.includes("ALCISTA") || text.includes("MANTENER")) return "buy";
-  if (text.includes("VENTA 100") || text.includes("BAJISTA") || text.includes("VENDER TODO")) return "sell";
-  if (text.includes("VENTA") || text.includes("LATERAL") || text.includes("REDUCIR") || text.includes("STOP")) return "partial";
+  if (text.includes("COMPRA") || text.includes("ALCISTA") || text.includes("MANTENER") || text.includes("Baja")) return "buy";
+  if (text.includes("VENTA 100") || text.includes("BAJISTA") || text.includes("Salida fuerte") || text.includes("VENDER TODO")) return "sell";
+  if (text.includes("VENTA") || text.includes("LATERAL") || text.includes("REDUCIR") || text.includes("Reducir") || text.includes("STOP") || text.includes("Vigilar")) return "partial";
   if (text.includes("MIXTA")) return "mixed";
   return "neutral";
 }
@@ -2096,7 +2906,7 @@ function scoreBar(val, color="#3b82f6") {
 }
 
 function qualityColor(score) {
-  if (!score && score !== 0) return "#64748b";
+  if (score === null || score === undefined || Number.isNaN(Number(score))) return "#64748b";
   if (score >= 85) return "#86efac";
   if (score >= 75) return "#4ade80";
   if (score >= 65) return "#a3e635";
@@ -2105,7 +2915,7 @@ function qualityColor(score) {
 }
 
 function valuationColor(score) {
-  if (!score && score !== 0) return "#64748b";
+  if (score === null || score === undefined || Number.isNaN(Number(score))) return "#64748b";
   if (score >= 80) return "#86efac";
   if (score >= 65) return "#4ade80";
   if (score >= 45) return "#fde68a";
@@ -2120,13 +2930,10 @@ function showTab(id, ev) {
   if (ev && ev.target) ev.target.classList.add("active");
 }
 
-// ── Carga de datos ───────────────────────────────────────────────────────────
 async function loadData() {
-  [allAssets, signals, summary] = await Promise.all([
-    fetch("data/all_assets.json").then(r => r.json()),
-    fetch("data/signals.json").then(r => r.json()),
-    fetch("data/summary.json").then(r => r.json()),
-  ]);
+  allAssets = await fetch("data/all_assets.json").then(r => r.json());
+  signals = await fetch("data/signals.json").then(r => r.json());
+  summary = await fetch("data/summary.json").then(r => r.json());
 
   renderSummary();
   renderGlobal();
@@ -2135,16 +2942,15 @@ async function loadData() {
   renderPortfolio();
 }
 
-// ── Summary cards ────────────────────────────────────────────────────────────
 function renderSummary() {
   document.getElementById("subtitle").innerText =
     `Última actualización: ${summary.generated_at || "—"} · Activos analizados: ${summary.total_assets || 0}`;
 
   const cards = [
-    ["🌍 Macro", summary.macro?.label || "—", `Score: ${fmtNum(summary.macro?.score, 1)}`],
+    ["🌍 Macro", summary.macro?.label || "—", `${summary.macro?.warning_text || "Score: " + fmtNum(summary.macro?.score, 1)}`],
     ["💶 EUR/USD", summary.fx?.label || "—", summary.fx?.diag || "—"],
     ["🎯 Señales", String(summary.total_signals || 0), `Compras: ${summary.buy_signals || 0} · Ventas: ${summary.sell_signals || 0}`],
-    ["⚙️ Parámetros", `${summary.config?.LOOKBACK_SIGNAL || 5} velas`, `PVI ${summary.config?.PVI_MA || 120} · McG ${summary.config?.MCG_EXIT_N || 45}`],
+    ["⚙️ Parámetros", `${summary.config?.LOOKBACK_SIGNAL || 5} velas`, `PVI ${summary.config?.PVI_MA || 120} · RVOL ${summary.config?.RVOL_HIGH || 1.5}x`],
   ];
 
   document.getElementById("summaryCards").innerHTML = cards.map(c => `
@@ -2156,7 +2962,6 @@ function renderSummary() {
   `).join("");
 }
 
-// ── Panel global ─────────────────────────────────────────────────────────────
 function renderGlobal() {
   const rows = (summary.macro?.rows || []).map(r => `
     <tr>
@@ -2172,7 +2977,9 @@ function renderGlobal() {
   document.getElementById("macroTable").innerHTML = `
     <table>
       <thead>
-        <tr><th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th></tr>
+        <tr>
+          <th>Indicador</th><th>Valor</th><th>ROC 5D</th><th>ROC 20D</th><th>Impacto</th><th>Diagnóstico</th>
+        </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -2194,65 +3001,110 @@ function renderGlobal() {
   `;
 }
 
-// ── Bloque fundamental para señales y universo ───────────────────────────────
 function fundBlock(a) {
-  const hasFund = a.has_fundamentals === true
-    && (a.quality_score !== null && a.quality_score !== undefined
-        || a.valuation_score !== null && a.valuation_score !== undefined);
+  const hasFund = a.has_fundamentals === true;
 
   if (!hasFund) {
-    return `<div class="small" style="color:var(--muted)">Sin fundamentales / técnico-only</div>`;
+    return `<div class="small">Sin fundamentales / técnico-only / datos insuficientes</div>`;
   }
 
-  const qS = a.quality_score;
-  const vS = a.valuation_score;
-  const qLbl = a.quality_label || "—";
-  const vLbl = a.valuation_label || "—";
-  const prof = a.fundamental_profile || "—";
-  const conf = a.confidence_grade || "—";
-  const qQ = a.quality_q || "—";
-  const model = a.fundamental_model || "—";
-  const period = a.period_label || "N/A";
-
   return `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-      <span class="badge qbadge">Calidad ${fmtNum(qS,0)} · ${qLbl}</span>
-      <span class="badge vbadge">Precio/Fund. ${fmtNum(vS,0)} · ${vLbl}</span>
-      <span class="badge neutral">Conf ${conf}</span>
-      <span class="badge qbadge">${qQ}</span>
+    <div>
+      ${badge("Calidad " + fmtNum(a.quality_score,0) + " · " + (a.quality_label || "—"), "qbadge")}
+      ${badge("Precio/Fund. " + fmtNum(a.valuation_score,0) + " · " + (a.valuation_label || "—"), "vbadge")}
+      ${badge("Conf " + (a.confidence_grade || "—"), "neutral")}
+      ${badge(a.quality_q || "—", "qbadge")}
     </div>
 
-    <div style="margin-bottom:4px">
-      ${scoreBar(qS, qualityColor(qS))}
-    </div>
-    <div style="margin-bottom:6px">
-      ${scoreBar(vS, valuationColor(vS))}
-    </div>
+    ${scoreBar(a.quality_score, qualityColor(a.quality_score))}
+    ${scoreBar(a.valuation_score, valuationColor(a.valuation_score))}
 
-    <div class="small" style="margin-bottom:4px">
-      <span class="badge profbadge">${prof}</span>
+    <div class="small">${a.fundamental_profile || "—"} · ${a.fundamental_trend || "—"}</div>
+
+    <div class="small">
+      Calidad: ${fmtNum(a.score_quality,0)} op ·
+      ${fmtNum(a.score_cash,0)} caja ·
+      ${fmtNum(a.score_solvency,0)} solv ·
+      ${fmtNum(a.score_growth,0)} crec ·
+      ${fmtNum(a.score_risk,0)} riesgo
     </div>
 
     <div class="small">
-      Calidad: ${fmtNum(a.score_quality,0)} op · ${fmtNum(a.score_cash,0)} caja ·
-               ${fmtNum(a.score_solvency,0)} solv · ${fmtNum(a.score_growth,0)} crec ·
-               ${fmtNum(a.score_risk,0)} riesgo
+      ROIC ${fmtPct(a.roic,1)} · ROE ${fmtPct(a.roe,1)} ·
+      FCF Yield ${fmtPct(a.fcf_yield,1)} ·
+      Altman ${fmtNum(a.altman_z,2)} ·
+      Piotroski ${fmtNum(a.piotroski,1)}
     </div>
+
     <div class="small">
-      ROIC ${fmtPct(a.roic,1)} · ROE ${fmtPct(a.roe,1)} · FCF Yield ${fmtPct(a.fcf_yield,1)} ·
-      Altman ${fmtNum(a.altman_z,2)} · Piotroski ${fmtNum(a.piotroski,1)}
+      P/E ${fmtNum(a.pe,1)} · P/B ${fmtNum(a.pb,2)} ·
+      EV/EBITDA ${fmtNum(a.ev_ebitda,1)} ·
+      ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)}
     </div>
+
     <div class="small">
-      P/E ${fmtNum(a.pe,1)} · P/B ${fmtNum(a.pb,2)} · ND/EBITDA ${fmtNum(a.net_debt_ebitda,2)} ·
-      Beneish ${fmtNum(a.beneish_m,2)}
+      ${a.fundamental_model || "—"} · ${a.period_label || "N/A"} · ${a.valuation_style || "—"}
     </div>
-    <div class="small" style="color:var(--muted)">${model} · ${period}</div>
+
     ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-    ${a.not_applicable ? `<div class="small" style="color:var(--muted)">N/A: ${a.not_applicable}</div>` : ""}
   `;
 }
 
-// ── Señales ──────────────────────────────────────────────────────────────────
+function techBlock(a) {
+  const macroWarn = summary.macro?.warning && String(a.main_signal || "").includes("COMPRA")
+    ? badge("⚠️ Macro cautelosa", "warnbadge")
+    : "";
+
+  const volBlocked = a.raw_buy_blocked_by_vol
+    ? `<div class="small warning">⚠️ Señal de compra bloqueada por volumen insuficiente</div>`
+    : "";
+
+  return `
+    <div>
+      ${badge(a.technical_state || "—")}
+      ${badge(a.signal_freshness || "—", "neutral")}
+      ${macroWarn}
+    </div>
+
+    <div class="small">
+      Entrada: <b>${a.entry_quality_label || "—"}</b>
+      ${a.entry_quality_score !== null && a.entry_quality_score !== undefined ? " · " + fmtNum(a.entry_quality_score,0) + "/100" : ""}
+    </div>
+
+    <div class="small">
+      ${a.entry_quality_notes || ""}
+    </div>
+
+    <div class="small">
+      Salida: <b>${a.exit_pressure_label || "—"}</b> · ${fmtNum(a.exit_pressure_score,0)}/100
+    </div>
+
+    <div class="small">
+      ${a.exit_pressure_notes || ""}
+    </div>
+
+    <div class="small">
+      PVI ${a.pvi_status || "—"} · Gap ${fmtPct(a.pvi_gap,2)} ·
+      RVOL ${fmtNum(a.rvol,2)}x
+      ${a.bullish_high_volume ? " · 🟢 Vol. alcista alto" : ""}
+      ${a.bearish_high_volume ? " · 🔴 Vol. bajista alto" : ""}
+    </div>
+
+    <div class="small">
+      Dist McG ${fmtPct(a.dist_to_mcg_exit,1)} ·
+      ATR ${fmtNum(a.dist_to_mcg_exit_atr,2)}x ·
+      CHOP ${fmtNum(a.chop,1)}
+    </div>
+
+    <div class="small">
+      Stop: ${a.stop_status || "—"}
+    </div>
+
+    ${a.volume_quality === false ? `<div class="small warning">⚠️ ${a.volume_warning || "Volumen dudoso"}</div>` : ""}
+    ${volBlocked}
+  `;
+}
+
 function signalRow(a) {
   return `
     <tr>
@@ -2260,21 +3112,9 @@ function signalRow(a) {
         <div class="ticker">${a.ticker}</div>
         <div class="name">${a.name || "—"}</div>
       </td>
-      <td>
-        ${badge(a.main_signal)}
-        <div class="small">${a.events_text || ""}</div>
-      </td>
-      <td>
-        ${badge(a.regime)}
-        <div class="small">Cruces: ${a.recent_crosses ?? "—"}</div>
-      </td>
-      <td>
-        <b>${fmtNum(a.close,2)}</b>
-        <div class="small">Dist. McG: ${fmtPct(a.dist_to_mcg_exit,1)}</div>
-        <div class="small">PVI: ${a.pvi_status || "—"} · ${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-        <div class="small">Prev: ${fmtNum(a.pvi_prev,1)} / EMA120 ${fmtNum(a.pvi_signal_prev,1)}</div>
-        <div class="small">Cruce vela actual: ${a.pvi_cross_current ? "SÍ" : "NO"}</div>
-      </td>
+      <td>${badge(a.main_signal)}<div class="small">${a.events_text || ""}</div></td>
+      <td>${badge(a.regime)}<div class="small">Cruces: ${a.recent_crosses ?? "—"}</div></td>
+      <td>${techBlock(a)}</td>
       <td>${fundBlock(a)}</td>
       <td>${a.bucket || "—"}</td>
     </tr>
@@ -2288,9 +3128,20 @@ function renderSignals() {
 
   let data = signals.slice();
 
-  if (q)      data = data.filter(a => String(a.ticker).toUpperCase().includes(q) || String(a.name).toUpperCase().includes(q));
-  if (type)   data = data.filter(a => String(a.main_signal || "").includes(type));
-  if (regime) data = data.filter(a => String(a.regime || "").includes(regime));
+  if (q) {
+    data = data.filter(a =>
+      String(a.ticker).toUpperCase().includes(q) ||
+      String(a.name).toUpperCase().includes(q)
+    );
+  }
+
+  if (type) {
+    data = data.filter(a => String(a.main_signal || "").includes(type));
+  }
+
+  if (regime) {
+    data = data.filter(a => String(a.regime || "").includes(regime));
+  }
 
   if (!data.length) {
     document.getElementById("signalsTable").innerHTML = `<p class="small">No hay señales con esos filtros.</p>`;
@@ -2301,7 +3152,7 @@ function renderSignals() {
     <table>
       <thead>
         <tr>
-          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico</th><th>Calidad · Precio/Fund.</th><th>Universo</th>
+          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Técnico avanzado</th><th>Fundamental</th><th>Universo</th>
         </tr>
       </thead>
       <tbody>${data.map(signalRow).join("")}</tbody>
@@ -2309,7 +3160,6 @@ function renderSignals() {
   `;
 }
 
-// ── Universo ─────────────────────────────────────────────────────────────────
 function confidenceValue(c) {
   if (c === "A") return 3;
   if (c === "B") return 2;
@@ -2318,14 +3168,15 @@ function confidenceValue(c) {
 }
 
 function renderUniverse() {
-  const q           = (document.getElementById("universeSearch")?.value || "").toUpperCase();
-  const regime      = document.getElementById("universeRegime")?.value || "";
-  const confFilter  = document.getElementById("fundConfidenceFilter")?.value || "";
-  const qualMin     = document.getElementById("fundQualityFilter")?.value;
-  const valMin      = document.getElementById("fundValuationFilter")?.value;
-  const profileF    = document.getElementById("fundProfileFilter")?.value || "";
-  const qFilter     = document.getElementById("fundQFilter")?.value || "";
-  const onlyFund    = document.getElementById("onlyFundamentals")?.checked || false;
+  const q = (document.getElementById("universeSearch")?.value || "").toUpperCase();
+  const regime = document.getElementById("universeRegime")?.value || "";
+  const confFilter = document.getElementById("fundConfidenceFilter")?.value || "";
+  const qualMin = document.getElementById("fundQualityFilter")?.value;
+  const valMin = document.getElementById("fundValuationFilter")?.value;
+  const entryMin = document.getElementById("entryQualityFilter")?.value;
+  const exitMin = document.getElementById("exitPressureFilter")?.value;
+  const qFilter = document.getElementById("fundQFilter")?.value || "";
+  const onlyFund = document.getElementById("onlyFundamentals")?.checked || false;
 
   let data = allAssets.slice();
 
@@ -2338,65 +3189,48 @@ function renderUniverse() {
     );
   }
 
-  if (regime)   data = data.filter(a => String(a.regime || "").includes(regime));
+  if (regime) data = data.filter(a => String(a.regime || "").includes(regime));
   if (onlyFund) data = data.filter(a => a.has_fundamentals === true);
   if (confFilter) data = data.filter(a => confidenceValue(a.confidence_grade) >= confidenceValue(confFilter));
-  if (qualMin)  data = data.filter(a => Number(a.quality_score) >= Number(qualMin));
-  if (valMin)   data = data.filter(a => Number(a.valuation_score) >= Number(valMin));
-  if (profileF) data = data.filter(a => String(a.fundamental_profile || "").includes(profileF));
-  if (qFilter)  data = data.filter(a => String(a.quality_q || "") === qFilter);
+  if (qualMin) data = data.filter(a => Number(a.quality_score) >= Number(qualMin));
+  if (valMin) data = data.filter(a => Number(a.valuation_score) >= Number(valMin));
+  if (entryMin) data = data.filter(a => Number(a.entry_quality_score) >= Number(entryMin));
+  if (exitMin) data = data.filter(a => Number(a.exit_pressure_score) >= Number(exitMin));
+  if (qFilter) data = data.filter(a => String(a.quality_q || "") === qFilter);
 
-  // Orden: quality_score desc, luego ticker
-  data = data.sort((a, b) => {
-    const qa = a.quality_score === null || a.quality_score === undefined ? -1 : Number(a.quality_score);
-    const qb = b.quality_score === null || b.quality_score === undefined ? -1 : Number(b.quality_score);
-    if (qb !== qa) return qb - qa;
+  data = data.sort((a,b) => {
+    const fa = a.quality_score === null || a.quality_score === undefined ? -1 : Number(a.quality_score);
+    const fb = b.quality_score === null || b.quality_score === undefined ? -1 : Number(b.quality_score);
+    if (fb !== fa) return fb - fa;
     return String(a.ticker).localeCompare(String(b.ticker));
   });
 
-  const rows = data.map(a => {
-    const hasFund = a.has_fundamentals === true;
-
-    const fundCell = hasFund ? `
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
-        <span class="badge qbadge">Cal ${fmtNum(a.quality_score,0)} · ${a.quality_label || "—"}</span>
-        <span class="badge vbadge">Val ${fmtNum(a.valuation_score,0)} · ${a.valuation_label || "—"}</span>
-        <span class="badge neutral">Conf ${a.confidence_grade || "—"}</span>
-        <span class="badge qbadge">${a.quality_q || "—"}</span>
-      </div>
-      <div style="margin-bottom:3px">${scoreBar(a.quality_score, qualityColor(a.quality_score))}</div>
-      <div style="margin-bottom:4px">${scoreBar(a.valuation_score, valuationColor(a.valuation_score))}</div>
-      <div class="small"><span class="badge profbadge">${a.fundamental_profile || "—"}</span></div>
-      <div class="small" style="color:var(--muted)">${a.fundamental_model || "—"} · ${a.period_label || "N/A"}</div>
-      ${a.red_flags ? `<div class="small warning">⚠️ ${a.red_flags}</div>` : ""}
-    ` : `<span class="small" style="color:var(--muted)">—</span>`;
-
-    return `
-      <tr>
-        <td>
-          <div class="ticker">${a.ticker}</div>
-          <div class="name">${a.name || "—"}</div>
-        </td>
-        <td>${badge(a.main_signal || "—")}</td>
-        <td>${badge(a.regime || "—")}</td>
-        <td><b>${fmtNum(a.close,2)}</b></td>
-        <td>${fundCell}</td>
-        <td>
-          ${a.pvi_status || "—"}
-          <div class="small">${fmtNum(a.pvi,1)} / EMA120 ${fmtNum(a.pvi_signal,1)}</div>
-        </td>
-        <td>${fmtPct(a.dist_to_mcg_exit,1)}</td>
-        <td>${a.bucket || "—"}</td>
-      </tr>
-    `;
-  }).join("");
+  const rows = data.map(a => `
+    <tr>
+      <td>
+        <div class="ticker">${a.ticker}</div>
+        <div class="name">${a.name || "—"}</div>
+      </td>
+      <td>${badge(a.main_signal || "—")}</td>
+      <td>${badge(a.regime || "—")}<div class="small">${a.technical_state || "—"}</div></td>
+      <td>${fmtNum(a.close,2)}</td>
+      <td>${techBlock(a)}</td>
+      <td>${fundBlock(a)}</td>
+      <td>${a.bucket || "—"}</td>
+    </tr>
+  `).join("");
 
   document.getElementById("universeTable").innerHTML = `
     <table>
       <thead>
         <tr>
-          <th>Activo</th><th>Señal</th><th>Régimen</th><th>Precio</th>
-          <th>Calidad · Precio/Fund.</th><th>PVI</th><th>Dist. McG</th><th>Universo</th>
+          <th>Activo</th>
+          <th>Señal</th>
+          <th>Régimen</th>
+          <th>Precio</th>
+          <th>Técnico avanzado</th>
+          <th>Fundamental</th>
+          <th>Universo</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -2404,7 +3238,6 @@ function renderUniverse() {
   `;
 }
 
-// ── Cartera ──────────────────────────────────────────────────────────────────
 function findAsset(ticker) {
   return allAssets.find(a => String(a.ticker).toUpperCase() === String(ticker).toUpperCase());
 }
@@ -2414,11 +3247,11 @@ function savePortfolio() {
 }
 
 function addPosition() {
-  const ticker   = document.getElementById("pfTicker").value.trim().toUpperCase();
+  const ticker = document.getElementById("pfTicker").value.trim().toUpperCase();
   const quantity = parseFloat(document.getElementById("pfQty").value);
   const buyPrice = parseFloat(document.getElementById("pfPrice").value);
-  const buyDate  = document.getElementById("pfDate").value;
-  const note     = document.getElementById("pfNote").value;
+  const buyDate = document.getElementById("pfDate").value;
+  const note = document.getElementById("pfNote").value;
 
   if (!ticker || !quantity || !buyPrice) {
     alert("Ticker, cantidad y precio de compra son obligatorios.");
@@ -2428,12 +3261,21 @@ function addPosition() {
   const asset = findAsset(ticker);
 
   portfolio.push({
-    ticker, name: asset ? asset.name : ticker,
-    quantity, buy_price: buyPrice, buy_date: buyDate, note
+    ticker,
+    name: asset ? asset.name : ticker,
+    quantity,
+    buy_price: buyPrice,
+    buy_date: buyDate,
+    note
   });
 
   savePortfolio();
-  ["pfTicker","pfQty","pfPrice","pfNote"].forEach(id => document.getElementById(id).value = "");
+
+  document.getElementById("pfTicker").value = "";
+  document.getElementById("pfQty").value = "";
+  document.getElementById("pfPrice").value = "";
+  document.getElementById("pfNote").value = "";
+
   renderPortfolio();
 }
 
@@ -2451,24 +3293,31 @@ function clearPortfolio() {
 }
 
 function systemAction(asset) {
-  if (!asset) return ["⚪ SIN DATOS", "No hay datos para este activo."];
+  if (!asset) {
+    return ["⚪ SIN DATOS", "No hay datos diarios para este activo."];
+  }
 
-  const signal  = asset.main_signal || "";
-  const regime  = asset.regime || "";
-  const pvi     = asset.pvi_status || "";
-  const belowMcg = asset.price_below_mcg_exit === true;
-  const dist    = asset.dist_to_mcg_exit;
+  const pressure = Number(asset.exit_pressure_score || 0);
+  const signal = asset.main_signal || "";
+  const state = asset.technical_state || "";
 
-  if (signal.includes("VENTA 100"))         return ["🔴 VENDER TODO", "Las dos patas de salida están activas."];
-  if (signal.includes("VENTA 50% PVI"))     return ["🟠 VENDER 50%", "PVI cruzó su media hacia abajo."];
-  if (signal.includes("VENTA 50% McGINLEY"))return ["🟠 VENDER 50%", "Precio cruzó McGinley de arriba hacia abajo."];
-  if (belowMcg)                              return ["🟠 REDUCIR / VIGILAR", "Precio por debajo del McGinley de salida."];
-  if (regime.includes("LATERAL"))            return ["🟡 NO AUMENTAR", "Régimen lateral: señales menos fiables."];
-  if (regime.includes("BAJISTA"))            return ["🔴 NO AUMENTAR", "Régimen bajista: no conviene aumentar riesgo."];
-  if (regime.includes("ALCISTA") && pvi === "POSITIVO") return ["🟢 MANTENER", "Tendencia alcista y PVI positivo."];
-  if (signal.includes("COMPRA"))             return ["🟢 POSIBLE COMPRA", "Cruce alcista de PVI reciente."];
-  if (dist !== null && dist !== undefined && Number(dist) < 0.015) return ["🟠 STOP CERCA", "Precio muy cerca de McGinley."];
-  return ["⚪ VIGILAR", "Sin señal operativa clara."];
+  if (signal.includes("VENTA 100") || pressure >= 75) {
+    return ["🔴 VENDER TODO / REVISAR", "Presión de salida fuerte."];
+  }
+
+  if (pressure >= 50) {
+    return ["🟠 REDUCIR", "Presión de salida elevada."];
+  }
+
+  if (pressure >= 25) {
+    return ["🟡 VIGILAR", "Hay deterioro técnico parcial."];
+  }
+
+  if (state.includes("Alcista confirmado")) {
+    return ["🟢 MANTENER", "Estado técnico favorable."];
+  }
+
+  return ["⚪ MANTENER / VIGILAR", "Sin señal operativa clara."];
 }
 
 function renderPortfolio() {
@@ -2478,16 +3327,18 @@ function renderPortfolio() {
     return;
   }
 
-  let totalValue = 0, totalCost = 0;
+  let totalValue = 0;
+  let totalCost = 0;
 
   const rows = portfolio.map((p, i) => {
-    const asset  = findAsset(p.ticker);
-    const price  = asset ? Number(asset.close) : null;
-    const qty    = Number(p.quantity);
-    const buy    = Number(p.buy_price);
-    const value  = price ? qty * price : null;
-    const cost   = qty * buy;
-    const pnl    = value !== null ? value - cost : null;
+    const asset = findAsset(p.ticker);
+    const price = asset ? Number(asset.close) : null;
+    const qty = Number(p.quantity);
+    const buy = Number(p.buy_price);
+
+    const value = price ? qty * price : null;
+    const cost = qty * buy;
+    const pnl = value !== null ? value - cost : null;
     const pnlPct = value !== null && cost ? value / cost - 1 : null;
 
     if (value !== null) totalValue += value;
@@ -2495,30 +3346,19 @@ function renderPortfolio() {
 
     const [action, reason] = systemAction(asset);
 
-    const fundMini = asset && asset.has_fundamentals ? `
-      <div class="small">
-        Cal ${fmtNum(asset.quality_score,0)} (${asset.quality_label || "—"}) ·
-        Val ${fmtNum(asset.valuation_score,0)} (${asset.valuation_label || "—"})
-      </div>
-      <div class="small">${asset.fundamental_profile || "—"}</div>
-    ` : "";
-
     return `
       <tr>
         <td>
           <div class="ticker">${p.ticker}</div>
           <div class="name">${p.name || (asset ? asset.name : "")}</div>
-          ${fundMini}
+          ${asset && asset.has_fundamentals ? `<div class="small">Cal ${fmtNum(asset.quality_score,0)} · Val ${fmtNum(asset.valuation_score,0)} · ${asset.fundamental_trend || "—"}</div>` : ""}
         </td>
         <td>${fmtNum(qty,4)}</td>
         <td>${fmtNum(buy,2)}</td>
         <td>${price ? fmtNum(price,2) : "—"}</td>
-        <td>
-          ${pnlPct !== null ? fmtPct(pnlPct,2) : "—"}
-          <div class="small">${pnl !== null ? fmtNum(pnl,2) : "—"}</div>
-        </td>
+        <td>${pnlPct !== null ? fmtPct(pnlPct,2) : "—"}<div class="small">${pnl !== null ? fmtNum(pnl,2) : "—"}</div></td>
         <td>${asset ? badge(asset.main_signal || "—") : "—"}<div class="small">${asset ? (asset.events_text || "") : ""}</div></td>
-        <td>${asset ? badge(asset.regime || "—") : "—"}</td>
+        <td>${asset ? badge(asset.exit_pressure_label || "—") : "—"}<div class="small">${asset ? asset.exit_pressure_notes || "" : ""}</div></td>
         <td>${badge(action)}<div class="small">${reason}</div></td>
         <td>${p.buy_date || "—"}<div class="small">${p.note || ""}</div></td>
         <td><button class="danger" onclick="deletePosition(${i})">Borrar</button></td>
@@ -2526,7 +3366,7 @@ function renderPortfolio() {
     `;
   }).join("");
 
-  const totalPnl    = totalValue - totalCost;
+  const totalPnl = totalValue - totalCost;
   const totalPnlPct = totalCost ? totalValue / totalCost - 1 : null;
 
   document.getElementById("portfolioSummary").innerHTML = `
@@ -2543,7 +3383,7 @@ function renderPortfolio() {
       <thead>
         <tr>
           <th>Activo</th><th>Cantidad</th><th>Compra</th><th>Actual</th><th>PnL</th>
-          <th>Señal</th><th>Régimen</th><th>Acción sistema</th><th>Fecha/Nota</th><th></th>
+          <th>Señal</th><th>Presión salida</th><th>Acción sistema</th><th>Fecha/Nota</th><th></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -2552,23 +3392,30 @@ function renderPortfolio() {
 }
 
 function exportPortfolio() {
-  const blob = new Blob([JSON.stringify(portfolio, null, 2)], {type:"application/json"});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href = url; a.download = "sovereign_portfolio.json"; a.click();
+  const blob = new Blob([JSON.stringify(portfolio, null, 2)], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "sovereign_portfolio.json";
+  a.click();
 }
 
 function importPortfolio(event) {
   const file = event.target.files[0];
   if (!file) return;
+
   const reader = new FileReader();
+
   reader.onload = function(e) {
     try {
       portfolio = JSON.parse(e.target.result);
       savePortfolio();
       renderPortfolio();
-    } catch { alert("No se pudo importar el JSON."); }
+    } catch {
+      alert("No se pudo importar el JSON.");
+    }
   };
+
   reader.readAsText(file);
 }
 
@@ -2585,6 +3432,8 @@ loadData();
 
 def main():
     print("🚀 LCrack Sovereign")
+    print(f"   Modo filtro volumen: {CONFIG.get('VOL_FILTER_MODE')} · RVOL≥{CONFIG['RVOL_HIGH']}x")
+
     site_dir = Path("site")
     data_dir = site_dir / "data"
 
@@ -2592,6 +3441,7 @@ def main():
     data_dir.mkdir(parents=True, exist_ok=True)
 
     universe_df = build_universe_df()
+
     print(f"📡 Universo: {len(universe_df)} activos")
 
     tech_rows = []
@@ -2604,25 +3454,29 @@ def main():
 
         for fut in as_completed(futures):
             ticker = futures[fut]
+
             try:
                 res = fut.result()
                 tech_rows.append(res)
+
                 if res.get("has_signal"):
-                    print(f"✅ Señal: {ticker} -> {res.get('main_signal')}")
+                    print(
+                        f"✅ Señal: {ticker} -> {res.get('main_signal')} · "
+                        f"{res.get('entry_quality_label','—')} · "
+                        f"{res.get('exit_pressure_label','—')}"
+                    )
             except Exception as e:
                 print(f"⚠️ Error técnico {ticker}: {e}")
 
     assets_df = pd.DataFrame(tech_rows)
+
     assets_df = add_fundamentals(assets_df, universe_df)
 
     if not assets_df.empty:
         assets_df["sort_signal"] = assets_df["bars_min"].fillna(999)
         assets_df = assets_df.sort_values(["sort_signal", "ticker"], ascending=[True, True])
 
-    signals_df = (
-        assets_df[assets_df["has_signal"] == True].copy()
-        if not assets_df.empty else pd.DataFrame()
-    )
+    signals_df = assets_df[assets_df["has_signal"] == True].copy() if not assets_df.empty else pd.DataFrame()
 
     macro = macro_context()
     fx = currency_context()
@@ -2633,7 +3487,7 @@ def main():
     sell_signals = 0
 
     if not signals_df.empty:
-        buy_signals  = int(signals_df["main_signal"].astype(str).str.contains("COMPRA").sum())
+        buy_signals = int(signals_df["main_signal"].astype(str).str.contains("COMPRA").sum())
         sell_signals = int(signals_df["main_signal"].astype(str).str.contains("VENTA").sum())
 
     summary = {
@@ -2670,3 +3524,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+Si quieres, en el siguiente mensaje puedo:
+
+- Dejarte un **diff conceptual** respecto a tu Mejora B (para ver solo lo que he tocado), o  
+- Ajustar el `VOL_FILTER_MODE` a `"hard"` y simplificar mensajes para operar 100% con el filtro ganador del backtest.
