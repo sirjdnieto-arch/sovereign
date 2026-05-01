@@ -2831,29 +2831,88 @@ button.danger {
     </div>
   </section>
 
+  Aquí tienes el bloque de código HTML listo para **copiar y pegar** en tu script Python. 
+
+He estructurado el texto para que visualmente sea muy fácil de consultar mientras usas la herramienta. Sustituye la sección `<section id="rules" class="section">` en tu variable `INDEX_HTML` por esta:
+
+```html
+  <!-- ═══════════════════ REGLAS (MANUAL OPERATIVO) ════════════════════ -->
   <section id="rules" class="section">
     <div class="card">
-      <h2>📘 Reglas del sistema</h2>
+      <h2>📘 Manual Operativo LCrack Sovereign v2</h2>
+      <p class="small">Este sistema utiliza un triple filtro secuencial (Macro > Técnico > Fundamental) para una gestión profesional del capital.</p>
 
-      <h3>Técnico</h3>
-      <p><b>Compra:</b> PVI cruza su EMA120 de abajo hacia arriba.</p>
-      <p><b>Venta 50% PVI:</b> PVI cruza su EMA120 de arriba hacia abajo.</p>
-      <p><b>Venta 50% McGinley:</b> precio cruza McGinley de salida hacia abajo.</p>
-      <p><b>Venta 100%:</b> PVI negativo + precio bajo McGinley salida.</p>
-      <p><b>RVOL alto:</b> volumen relativo ≥ 1.5x. En entradas suma calidad. En salidas agrava la presión si es bajista.</p>
-      <p><b>Presión de salida:</b> estado persistente, aunque la señal reciente ya haya caducado.</p>
-      <p><b>Calidad de entrada:</b> combina PVI, tendencia McGinley, lateralidad, volumen y gap PVI.</p>
-      <p><b>Stop:</b> distancia al McGinley de salida en % y en ATR (MUY CERCA / AJUSTADO / HOLGADO / LEJANO).</p>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+        
+        <!-- COLUMNA 1: ENTRADA -->
+        <div>
+          <h3>1️⃣ Filtro Macro (Contexto)</h3>
+          <p>Antes de abrir posiciones, consulta el panel <b>Global</b>:</p>
+          <ul>
+            <li><span class="badge buy">FAVORABLE / NEUTRAL</span> Se permiten nuevas compras.</li>
+            <li><span class="badge sell">CAUTELOSO</span> No abrir nuevas posiciones. Vigilar stops.</li>
+            <li><b>Divisa:</b> Si el <span class="badge sell">EUR FUERTE</span>, la rentabilidad en activos USD se verá penalizada por el tipo de cambio.</li>
+          </ul>
 
-      <h3>Fundamentales</h3>
-      <p><b>Calidad:</b> rentabilidad, caja, solvencia, crecimiento y riesgo contable.</p>
-      <p><b>Precio/Fundamentales:</b> valoración separada, con baremos sectoriales aproximados.</p>
-      <p><b>Confianza:</b> cobertura, frescura e historial de datos.</p>
-      <p><b>Tendencia fundamental:</b> si ingresos, operativo y beneficio mejoran o se deterioran.</p>
+          <h3>2️⃣ La Señal de Compra (Motor Técnico)</h3>
+          <p>Un activo es candidato a compra si cumple simultáneamente:</p>
+          <ul>
+            <li><b>Cruce PVI:</b> El indicador PVI cruza al alza su media de 120 días (en las últimas 5 velas).</li>
+            <li><b>Filtro de Volumen (RVOL):</b> Debe ser <b>≥ 1.5x</b>. Las señales sin volumen se ignoran (Validado por Backtest).</li>
+            <li><b>Régimen:</b> El precio debe estar sobre el McGinley de tendencia (Alcista) o saliendo de una zona Lateral.</li>
+          </ul>
 
-      <p class="warning"><b>Aviso:</b> herramienta mecánica basada en reglas. No es asesoramiento financiero.</p>
+          <h3>3️⃣ Filtro de Calidad (Entry Quality)</h3>
+          <p>Priorizamos activos según su <b>Entry Quality Score</b>:</p>
+          <ul>
+            <li><b>Score > 85 (A):</b> Señal de alta probabilidad y limpieza técnica.</li>
+            <li><b>Score 70-85 (B):</b> Señal sólida con buen respaldo.</li>
+            <li><b>Perfil:</b> Busca <span class="badge buy">Calidad con descuento</span> o <span class="badge buy">Calidad razonable</span>.</li>
+            <li><b>Red Flags:</b> Evita activos con avisos de <span class="warning">Altman</span> (riesgo financiero) o <span class="warning">Deuda alta</span>.</li>
+          </ul>
+        </div>
+
+        <!-- COLUMNA 2: RIESGO Y SALIDA -->
+        <div>
+          <h3>4️⃣ Gestión del Riesgo (Stops)</h3>
+          <p>Analiza la distancia al McGinley de salida (Stop):</p>
+          <ul>
+            <li><span class="badge buy">AJUSTADO ( < 2 ATR)</span> Riesgo bajo. Ideal para entrar.</li>
+            <li><span class="badge partial">HOLGADO ( 2-3 ATR)</span> El activo ya ha corrido. Riesgo de retroceso.</li>
+            <li><span class="badge sell">LEJANO ( > 3 ATR)</span> Activo estirado (sobrecomprado). <b>No perseguir el precio.</b></li>
+          </ul>
+
+          <h3>5️⃣ Protocolo de Venta (Salida 50/50)</h3>
+          <p>El sistema propone una salida escalonada para capturar beneficios y proteger capital:</p>
+          <ul>
+            <li><b>Venta Parcial (50%):</b> Si el PVI cruza su media a la baja <b>O</b> el precio rompe el McGinley de salida.</li>
+            <li><b>Venta Total (100%):</b> Si el PVI es negativo <b>Y</b> el precio está bajo el McGinley <b>O</b> el <b>Exit Pressure</b> > 75.</li>
+            <li><b>RVOL Bajista:</b> Si el activo cae con volumen > 1.5x, la presión de salida se acelera (<span class="badge sell">Salida Fuerte</span>).</li>
+          </ul>
+
+          <h3>6️⃣ Acciones Sugeridas en Cartera</h3>
+          <ul>
+            <li><span class="badge buy">MANTENER</span> Alcista, PVI positivo y presión de salida baja.</li>
+            <li><span class="badge partial">VIGILAR</span> Stop muy cerca o pérdida de momento.</li>
+            <li><span class="badge partial">REDUCIR</span> Cierre parcial por rotura técnica.</li>
+            <li><span class="badge sell">VENDER TODO</span> Confirmación de fin de tendencia.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <p class="warning" style="margin-top:20px; border-top: 1px solid var(--border); padding-top:10px;">
+        <b>⚠️ Aviso Legal:</b> Esta herramienta es un modelo matemático basado en reglas objetivas. Los resultados pasados no garantizan rentabilidades futuras. El usuario es responsable de sus propias decisiones de inversión.
+      </p>
     </div>
   </section>
+```
+
+### ¿Por qué este cambio es importante?
+1.  **Doble columna:** He organizado las reglas en "Entrada" y "Riesgo/Salida" para que puedas leerlas de un vistazo.
+2.  **Referencia a badges:** He usado las mismas clases de colores (`buy`, `sell`, `partial`) que ves en las tablas para que la conexión mental sea instantánea.
+3.  **Filosofía 50/50:** Deja claro que no hay por qué vender todo de golpe, lo cual ayuda mucho psicológicamente a dejar correr las ganancias.
+4.  **No perseguir el precio:** Incluye la regla de oro de no comprar si el stop está a más de 3 ATRs, lo cual te salvará de comprar en techos.
 
   <div class="footer">
     LCrack Sovereign · Datos vía yfinance/FRED/Fear & Greed.
